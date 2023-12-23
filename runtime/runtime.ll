@@ -3,6 +3,8 @@ source_filename = "./runtime/runtime.c"
 target datalayout = "e-m:o-i64:64-i128:128-n32:64-S128"
 target triple = "arm64-apple-macosx14.0.0"
 
+@.str = private unnamed_addr constant [7 x i8] c"naber\0A\00", align 1
+
 ; Function Attrs: noinline nounwind optnone ssp uwtable(sync)
 define i32 @r_runtime_printf(ptr noundef %0, ...) #0 {
   %2 = alloca ptr, align 8
@@ -38,16 +40,18 @@ define i32 @t() #0 {
 define i32 @r_runtime_scanf(ptr noundef %0, ...) #0 {
   %2 = alloca ptr, align 8
   %3 = alloca ptr, align 8
-  %4 = alloca i32, align 4
+  %4 = alloca ptr, align 8
+  %5 = alloca i32, align 4
   store ptr %0, ptr %2, align 8
   call void @llvm.va_start(ptr %3)
-  %5 = load ptr, ptr %2, align 8
-  %6 = load ptr, ptr %3, align 8
-  %7 = call i32 @vscanf(ptr noundef %5, ptr noundef %6)
-  store i32 %7, ptr %4, align 4
+  store ptr @.str, ptr %4, align 8
+  %6 = load ptr, ptr %2, align 8
+  %7 = load ptr, ptr %3, align 8
+  %8 = call i32 @vscanf(ptr noundef %6, ptr noundef %7)
+  store i32 %8, ptr %5, align 4
   call void @llvm.va_end(ptr %3)
-  %8 = load i32, ptr %4, align 4
-  ret i32 %8
+  %9 = load i32, ptr %5, align 4
+  ret i32 %9
 }
 
 declare i32 @vscanf(ptr noundef, ptr noundef) #2

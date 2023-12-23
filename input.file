@@ -1,1 +1,12 @@
-5 + 5 + 3 + 25 + 22
+# this is first comment line of our language
+fun abc(int a) int {
+    call r_runtime_printf("bu abc fonksiyonunun stringi: %d \n\x00", a)
+    return 6
+}
+
+# main function
+fun main() int {
+    call abc(5*2*2)
+    call abc(7)
+    return 0
+}
