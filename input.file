@@ -6,7 +6,7 @@ fun abc(int a) int {
 
 # main function
 fun main() int {
-    call abc(5*2*2)
+    call abc(5*(2*3)/(2+2*3))
     call abc(7)
     return 0
 }

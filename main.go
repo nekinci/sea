@@ -199,6 +199,8 @@ func (c *Compiler) expr(expr Expr) value.Value {
 		default:
 			panic("TODO:")
 		}
+	case *ParenExpr:
+		return c.expr(expr.Expr)
 	default:
 		panic("unreachable")
 	}
@@ -865,7 +867,7 @@ func (p *Parser) op(tok Token) Operation {
 	case TokMultiply:
 		return Mul
 	default:
-		panic("unreachable op")
+		panic("unreachable op=" + string(tok))
 	}
 }
 
@@ -879,7 +881,11 @@ func (p *Parser) parseSimpleExpr() Expr {
 		v, err := strconv.ParseInt(val, 10, 64)
 		assert(err == nil, fmt.Sprintf("Invalid number: %v", err))
 		return &NumberExpr{Value: v}
-
+	case TokLParen:
+		p.expect(TokLParen)
+		expr := p.parseExpr()
+		p.expect(TokRParen)
+		return &ParenExpr{Expr: expr}
 	default:
 		panic("unreachable tok=" + string(p.curTok))
 
