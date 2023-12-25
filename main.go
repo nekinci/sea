@@ -32,25 +32,20 @@ type Compiler struct {
 	fun       *ir.Func
 	funcs     map[string]*ir.Func
 	types     map[string]types.Type
-	pckg      *Package
+	pkg       *Package
 }
 
 func (c *Compiler) compile() {
-	assert(c.pckg != nil, "pckg is nil")
+	assert(c.pkg != nil, "pkg is nil")
 	assert(c.module != nil, "module is nil")
-	for _, stmt := range c.pckg.Stmts {
+	for _, stmt := range c.pkg.Stmts {
 		c.compileStmt(stmt)
 	}
 
 }
 
 func (c *Compiler) compileStmt(stmt Stmt) {
-	switch stmt := stmt.(type) {
-	case *DefStmt:
-		c.compileStmt(stmt.Stmt)
-	case *FuncDefStmt:
-		c.newFunc(stmt)
-	}
+	c.stmt(stmt)
 }
 
 func (c *Compiler) initBuiltinTypes() {
@@ -62,6 +57,7 @@ func (c *Compiler) initBuiltinTypes() {
 
 	c.types["void"] = types.Void
 	c.types["int"] = types.I32
+	c.types["bool"] = types.I1
 }
 
 func (c *Compiler) initBuiltinFuncs() {
@@ -76,6 +72,13 @@ func (c *Compiler) initBuiltinFuncs() {
 	}
 
 	c.funcs["r_runtime_printf"] = runtimePrintf
+
+	runtimeScanf := module.NewFunc("r_runtime_scanf", types.I32, ir.NewParam("", types.NewPointer(types.I8)))
+	runtimeScanf.Sig.Variadic = true
+	runtimeScanf.Linkage = enum.LinkageExternal
+
+	c.funcs["r_runtime_scanf"] = runtimeScanf
+
 }
 
 func (c *Compiler) resolveType(expr Expr) types.Type {
@@ -100,18 +103,14 @@ func (c *Compiler) defineType(expr Expr) types.Type {
 func (c *Compiler) defineVar(stmt *VarDefStmt) {
 	assert(c.variables != nil, "un-initialized variable map")
 	assert(c.block != nil, "block cannot be nil")
-	c.varExpr(stmt.Expr)
-}
-
-func (c *Compiler) varExpr(expr *VarExpr) {
 	block := c.block
 
-	typ := c.resolveType(expr.Type)
+	typ := c.resolveType(stmt.Type)
 	ptr := block.NewAlloca(typ)
-	c.variables[expr.Name.Name] = ptr
+	c.variables[stmt.Name.Name] = ptr
 
-	if expr.Init != nil {
-		block.NewStore(c.expr(expr.Init), ptr)
+	if stmt.Init != nil {
+		block.NewStore(c.expr(stmt.Init), ptr)
 	}
 }
 
@@ -138,18 +137,63 @@ func (c *Compiler) newFunc(def *FuncDefStmt) *ir.Func {
 	c.block = block
 
 	for _, innerStmt := range def.Body.Stmts {
-		switch innerStmt := innerStmt.(type) {
-		case *ReturnStmt:
-			block.NewRet(c.expr(innerStmt.Value))
-		case *VarDefStmt:
-			c.defineVar(innerStmt)
-		case *ExprStmt:
-			c.expr(innerStmt.Expr)
-
-		}
+		c.stmt(innerStmt)
 	}
 
 	return f
+}
+
+func (c *Compiler) stmt(stmt Stmt) {
+	switch innerStmt := stmt.(type) {
+	case *ReturnStmt:
+		c.block.NewRet(c.expr(innerStmt.Value))
+	case *DefStmt:
+		c.stmt(innerStmt.Stmt)
+	case *ExprStmt:
+		c.expr(innerStmt.Expr)
+	case *IfStmt:
+		c.ifStmt(innerStmt)
+	case *FuncDefStmt:
+		c.newFunc(innerStmt)
+	case *VarDefStmt:
+		c.defineVar(innerStmt)
+	case *BlockStmt:
+		for _, innerStmt := range innerStmt.Stmts {
+			c.stmt(innerStmt)
+		}
+	default:
+		panic("unreachable stmt on compiler")
+
+	}
+}
+
+func (c *Compiler) ifStmt(stmt *IfStmt) {
+	cond := c.expr(stmt.Cond)
+	thenBlock := c.fun.NewBlock("")
+	continueBlock := c.fun.NewBlock("")
+	var elseBlock *ir.Block = continueBlock
+	if stmt.Else != nil {
+		elseBlock = c.fun.NewBlock("")
+	}
+
+	c.block.NewCondBr(cond, thenBlock, elseBlock)
+	c.block = thenBlock
+	c.stmt(stmt.Then)
+
+	if thenBlock.Term == nil {
+		thenBlock.NewBr(continueBlock)
+	}
+
+	if stmt.Else != nil {
+		c.block = elseBlock
+		c.compileStmt(stmt.Else)
+	}
+
+	if c.block.Term == nil {
+		c.block.NewBr(continueBlock)
+	}
+
+	c.block = continueBlock
 }
 
 func (c *Compiler) getVariable(name string) value.Value {
@@ -163,12 +207,21 @@ func (c *Compiler) call(expr *CallExpr) value.Value {
 	b := c.block
 
 	fun := c.getFunc(expr.Name.Name)
-	params := make([]value.Value, 0)
-	for _, e := range expr.Params {
-		params = append(params, c.expr(e))
+
+	isScanfCall := expr.Name.Name == "r_runtime_scanf"
+
+	args := make([]value.Value, 0)
+	for i, e := range expr.Args {
+		arg := c.expr(e)
+		// TODO: it is workaround, make it better
+		if isScanfCall && i != 0 {
+			args = append(args, arg.(*ir.InstLoad).Src)
+		} else {
+			args = append(args, arg)
+		}
 	}
 
-	return b.NewCall(fun, params...)
+	return b.NewCall(fun, args...)
 }
 
 func (c *Compiler) expr(expr Expr) value.Value {
@@ -180,11 +233,13 @@ func (c *Compiler) expr(expr Expr) value.Value {
 	case *NumberExpr:
 		return getI32Constant(expr.Value)
 	case *StringExpr:
-		v := expr.Value
-		v = v[1 : len(v)-1]
+		v := expr.Unquoted
 		v2 := constant.NewCharArrayFromString(v)
-		strPtr := c.module.NewGlobalDef("_val", v2)
-		zero := constant.NewInt(types.I8, 0)
+		strPtr := c.module.NewGlobalDef("", v2)
+		strPtr.Immutable = true
+		strPtr.Align = ir.Align(1)
+		strPtr.UnnamedAddr = enum.UnnamedAddrUnnamedAddr
+		var zero = constant.NewInt(types.I8, 0)
 		gep := constant.NewGetElementPtr(v2.Typ, strPtr, zero, zero)
 		return gep
 	case *CallExpr:
@@ -195,12 +250,22 @@ func (c *Compiler) expr(expr Expr) value.Value {
 		case *ir.Param:
 			return v
 		case *ir.InstAlloca:
-			return c.block.NewLoad(types.I32, v)
+			return c.block.NewLoad(v.ElemType, v)
 		default:
 			panic("TODO:")
 		}
 	case *ParenExpr:
 		return c.expr(expr.Expr)
+	case *BoolExpr:
+		return constant.NewBool(expr.Value)
+	case *UnaryExpr:
+		right := c.expr(expr.Right)
+		switch expr.Op {
+		case Sub:
+			return c.block.NewMul(constant.NewInt(types.I32, -1), right)
+		default:
+			panic("Unreachable unary expression op = " + expr.Op.String())
+		}
 	default:
 		panic("unreachable")
 	}
@@ -221,7 +286,40 @@ const (
 	Gt
 	Gte
 	Not
+	And
+	Band
 )
+
+func (o Operation) String() string {
+	switch o {
+	case Add:
+		return "+"
+	case Sub:
+		return "-"
+	case Mul:
+		return "*"
+	case Div:
+		return "/"
+	case Mod:
+		return "%"
+	case Eq:
+		return "=="
+	case Neq:
+		return "!="
+	case Lt:
+		return "<"
+	case Lte:
+		return "<="
+	case Gt:
+		return ">"
+	case Gte:
+		return ">="
+	case Not:
+		return "!"
+	default:
+		panic("unreachable")
+	}
+}
 
 type TokenKind int
 
@@ -263,6 +361,8 @@ func generateOperation(block *ir.Block, value1, value2 value.Value, op Operation
 		return block.NewICmp(enum.IPredSLT, value1, value2)
 	case Lte:
 		return block.NewICmp(enum.IPredSLE, value1, value2)
+	case And:
+		return block.NewAnd(value1, value2)
 	}
 
 	panic("unreachable")
@@ -290,12 +390,19 @@ type ParenExpr struct {
 func (p *ParenExpr) IsExpr() {}
 
 type StringExpr struct {
-	Value string
+	Value    string
+	Unquoted string
 }
 
 func (s *StringExpr) IsExpr() {}
 
 func (e *NumberExpr) IsExpr() {}
+
+type BoolExpr struct {
+	Value bool // 1 true 0 false
+}
+
+func (b *BoolExpr) IsExpr() {}
 
 type UnaryExpr struct {
 	Op    Operation
@@ -317,8 +424,8 @@ type DefStmt struct {
 }
 
 type CallExpr struct {
-	Name   *IdentExpr
-	Params []Expr
+	Name *IdentExpr
+	Args []Expr
 }
 
 func (c *CallExpr) IsExpr() {}
@@ -365,6 +472,15 @@ type Stmt interface {
 	Node
 	IsStmt()
 }
+
+type IfStmt struct {
+	Cond Expr
+	Then Stmt // what about single line un-blocked stmt?
+	Else Stmt
+}
+
+func (e *IfStmt) IsStmt() {}
+
 type ReturnStmt struct {
 	Value Expr
 }
@@ -372,10 +488,6 @@ type ReturnStmt struct {
 func (e *ReturnStmt) IsStmt() {}
 
 type VarDefStmt struct {
-	Expr *VarExpr
-}
-
-type VarExpr struct {
 	Name *IdentExpr
 	Type Expr
 	Init Expr
@@ -428,9 +540,9 @@ func main() {
 		panic(err)
 	}
 
-	compiler.module = &ir.Module{}
+	compiler.module = ir.NewModule()
 	compiler.init()
-	compiler.pckg = pckg
+	compiler.pkg = pckg
 	compiler.compile()
 	_, err = compiler.module.WriteTo(newFile)
 	if err != nil {
@@ -494,7 +606,6 @@ const (
 	TokIdentifier    Token = "<identifier>"
 	TokNumber        Token = "<number_literal>"
 	TokString        Token = "<string_literal>"
-	TokCall          Token = "call"
 	TokVar           Token = "var"
 	TokAssign        Token = "="
 	TokColon         Token = ":"
@@ -510,6 +621,25 @@ const (
 	TokSingleComment Token = "#"
 	TokMultiComment  Token = "%"
 	TokNot           Token = "!"
+	TokTrue          Token = "true"
+	TokFalse         Token = "false"
+	TokLShift        Token = "<<"
+	TokRShift        Token = ">>"
+	TokGt            Token = ">"
+	TokGte           Token = ">="
+	TokLt            Token = "<"
+	TokLte           Token = "<="
+	TokAnd           Token = "&&"
+	TokBAnd          Token = "&"
+	TokOr            Token = "||"
+	TokBOr           Token = "|"
+	TokXor           Token = "^"
+	TokNEqual        Token = "!="
+	TokIf            Token = "if"
+	TokElse          Token = "else"
+	TokFor           Token = "for"
+	TokContinue      Token = "continue"
+	TokBreak         Token = "break"
 )
 
 func (t Token) String() string {
@@ -666,14 +796,22 @@ func (l *Lexer) tok() Token {
 
 		identifier := l.value()
 		switch identifier {
-		case "call":
-			return TokCall
 		case "var":
 			return TokVar
 		case "fun":
 			return TokFun
 		case "return":
 			return TokReturn
+		case "true":
+			return TokTrue
+		case "false":
+			return TokFalse
+		case "if":
+			return TokIf
+		case "else":
+			return TokElse
+		case "for":
+			return TokFor
 		default:
 			return TokIdentifier
 		}
@@ -686,9 +824,10 @@ func (l *Lexer) tok() Token {
 		}
 		return TokNumber
 	case c == '"':
-		l.pos += 1
-		for l.pos < l.inputLen && l.input[l.pos] != '"' {
+		first := true
+		for l.pos < l.inputLen && (l.input[l.pos] != '"' || first) {
 			l.pos += 1
+			first = false
 		}
 		l.pos++
 		return TokString
@@ -700,6 +839,58 @@ func (l *Lexer) tok() Token {
 		}
 
 		return TokAssign
+	case c == '!':
+		l.pos++
+		if l.input[l.pos] == '=' {
+			l.pos += 1
+			return TokNEqual
+		}
+		return TokNot
+	case c == '&':
+		l.pos++
+		if l.input[l.pos] == '&' {
+			l.pos += 1
+			return TokAnd
+		}
+		return TokBAnd
+	case c == '|':
+		l.pos++
+		if l.input[l.pos] == '|' {
+			l.pos += 1
+			return TokOr
+		}
+		return TokBOr
+	case c == '^':
+		l.pos++
+		return TokXor
+	case c == '<':
+		l.pos++
+		if l.input[l.pos] == '=' {
+			l.pos += 1
+			return TokLte
+		}
+
+		if l.input[l.pos] == '<' {
+			l.pos++
+			return TokLShift
+		}
+
+		return TokLt
+
+	case c == '>':
+		l.pos++
+		if l.input[l.pos] == '=' {
+			l.pos += 1
+			return TokGte
+		}
+
+		if l.input[l.pos] == '>' {
+			l.pos++
+			return TokRShift
+		}
+
+		return TokGt
+
 	}
 
 	panic("unreachable: " + string(rune(c)))
@@ -761,6 +952,40 @@ func (p *Parser) parse() *Package {
 
 }
 
+func (p *Parser) parseVar() *DefStmt {
+	p.expect(TokVar)
+	_, typ := p.expect(TokIdentifier)
+	_, name := p.expect(TokIdentifier)
+	varDefStmt := &VarDefStmt{
+		Name: &IdentExpr{Name: name},
+		Type: &IdentExpr{Name: typ},
+		Init: nil,
+	}
+	def := &DefStmt{varDefStmt}
+
+	if p.curTok == TokAssign {
+		p.expect(TokAssign)
+		varDefStmt.Init = p.parseExpr()
+	}
+	return def
+}
+
+func (p *Parser) parseIf() *IfStmt {
+	p.expect(TokIf)
+	ifStmt := &IfStmt{}
+	ifStmt.Cond = p.parseExpr()
+	ifStmt.Then = p.parseStmt()
+	if p.curTok == TokElse {
+		p.expect(TokElse)
+		ifStmt.Else = p.parseStmt()
+	}
+	return ifStmt
+}
+
+func (p *Parser) parseFor() Stmt {
+	panic("TODO!")
+}
+
 func (p *Parser) parseStmt() Stmt {
 
 	switch p.curTok {
@@ -775,6 +1000,18 @@ func (p *Parser) parseStmt() Stmt {
 		returnStmt := &ReturnStmt{}
 		returnStmt.Value = p.parseExpr()
 		return returnStmt
+	case TokVar:
+		return p.parseVar()
+	case TokIf:
+		return p.parseIf()
+	case TokFor:
+		return p.parseFor()
+	case TokIdentifier:
+		if p.mayNextBe(TokIdentifier) {
+
+		} else if p.mayNextBe(TokAssign) {
+
+		}
 	}
 
 	return p.parseExprStmt()
@@ -812,19 +1049,40 @@ func (p *Parser) parseExprList() []Expr {
 	return exprs
 }
 
-func (p *Parser) precedence(tok Token) int {
+func (p *Parser) binaryPrecedence(tok Token) int {
 
-	// If it is binary expression then minimum precedence is 1; otherwise return 0 that indicates it is not binary operator
+	// If it is binary expression then minimum binaryPrecedence is 1; otherwise return 0 that indicates it is not binary operator
+	// Operation precedence
+	// 1. Multiply, Division, Lshift, Rshift, Mod
+	// 2. Plus, Minus
+	// 3. gt, lt, gte, lte,neq, eq
+	// 4. and, band
+	// 5. or, bor, xor
+	// And also unary operators are more precise
 
-	if tok == TokMultiply || tok == TokDivision {
+	switch tok {
+	case TokMultiply, TokDivision, TokLShift, TokRShift, TokMod:
+		return 5
+	case TokPlus, TokMinus:
+		return 4
+	case TokGt, TokGte, TokLt, TokLte, TokNEqual, TokEqual:
+		return 3
+	case TokAnd, TokBAnd:
 		return 2
-	}
-
-	if tok == TokPlus || tok == TokMinus {
+	case TokOr, TokBOr, TokXor:
 		return 1
 	}
 
 	return 0
+}
+
+func (p *Parser) unaryPrecedence(tok Token) int {
+	switch tok {
+	case TokMinus, TokPlus, TokNot:
+		return 6
+	default:
+		return 0
+	}
 }
 
 func (p *Parser) parseBinaryExpr(parentPrecedence int) Expr {
@@ -837,9 +1095,21 @@ func (p *Parser) parseBinaryExpr(parentPrecedence int) Expr {
 	// 5*4*3
 	// BinaryExpr[BinaryExpr[5*4] * 3]
 
-	left := p.parseSimpleExpr()
+	// -5+3
 
-	precedence := p.precedence(p.curTok)
+	var left Expr
+	unaryPrecedence := p.unaryPrecedence(p.curTok)
+	if unaryPrecedence != 0 && unaryPrecedence >= parentPrecedence {
+		tok, _ := p.expectAnyOf(TokMinus, TokNot, TokPlus)
+		left = &UnaryExpr{
+			Op:    p.op(tok),
+			Right: p.parseBinaryExpr(unaryPrecedence),
+		}
+	} else {
+		left = p.parseSimpleExpr()
+	}
+
+	precedence := p.binaryPrecedence(p.curTok)
 
 	for precedence > 0 && precedence > parentPrecedence {
 		var op = p.op(p.curTok)
@@ -849,7 +1119,7 @@ func (p *Parser) parseBinaryExpr(parentPrecedence int) Expr {
 			Right: p.parseBinaryExpr(precedence),
 			Op:    op,
 		}
-		precedence = p.precedence(p.curTok)
+		precedence = p.binaryPrecedence(p.curTok)
 
 	}
 
@@ -866,6 +1136,20 @@ func (p *Parser) op(tok Token) Operation {
 		return Div
 	case TokMultiply:
 		return Mul
+	case TokEqual:
+		return Eq
+	case TokGt:
+		return Gt
+	case TokGte:
+		return Gte
+	case TokLt:
+		return Lt
+	case TokLte:
+		return Lte
+	case TokNEqual:
+		return Neq
+	case TokAnd:
+		return And
 	default:
 		panic("unreachable op=" + string(tok))
 	}
@@ -874,40 +1158,53 @@ func (p *Parser) op(tok Token) Operation {
 func (p *Parser) parseSimpleExpr() Expr {
 	switch p.curTok {
 	case TokString:
-		_, val := p.expect(TokString)
-		return &StringExpr{Value: val}
+		_, str := p.expect(TokString)
+		unquotedStr, err := strconv.Unquote(str)
+		assert(err == nil, "unquoted string expected")
+		// implicitly add end of string to unquoted string
+		unquotedStr += "\x00"
+		return &StringExpr{Value: str, Unquoted: unquotedStr}
+		return &StringExpr{Value: str, Unquoted: unquotedStr}
 	case TokNumber:
 		_, val := p.expect(TokNumber)
 		v, err := strconv.ParseInt(val, 10, 64)
 		assert(err == nil, fmt.Sprintf("Invalid number: %v", err))
 		return &NumberExpr{Value: v}
+	case TokTrue, TokFalse:
+		tok, _ := p.expectAnyOf(TokTrue, TokFalse)
+		return &BoolExpr{Value: tok == TokTrue}
+
 	case TokLParen:
 		p.expect(TokLParen)
 		expr := p.parseExpr()
 		p.expect(TokRParen)
 		return &ParenExpr{Expr: expr}
+	case TokIdentifier:
+		return p.parseIdentExpr()
 	default:
 		panic("unreachable tok=" + string(p.curTok))
 
 	}
 }
 
-func (p *Parser) parseExpr() Expr {
-
-	switch p.curTok {
-	case TokCall:
-		p.expect(TokCall)
+func (p *Parser) parseIdentExpr() Expr {
+	_, identifier := p.expect(TokIdentifier)
+	if p.curTok == TokLParen {
 		callExpr := &CallExpr{}
-		_, identifier := p.expect(TokIdentifier)
 		callExpr.Name = &IdentExpr{Name: identifier}
 		p.expect(TokLParen)
-		callExpr.Params = p.parseExprList()
+		callExpr.Args = p.parseExprList()
 		p.expect(TokRParen)
 
 		return callExpr
-	case TokIdentifier:
-		_, val := p.expect(TokIdentifier)
-		return &IdentExpr{Name: val}
+	}
+
+	return &IdentExpr{Name: identifier}
+}
+
+func (p *Parser) parseExpr() Expr {
+
+	switch p.curTok {
 	default:
 		return p.parseBinaryExpr(0)
 	}
@@ -961,8 +1258,22 @@ func (p *Parser) expect(tok Token) (Token, string) {
 	return TokUnexpected, p.curVal
 }
 
+func (p *Parser) expectAnyOf(tokens ...Token) (Token, string) {
+	defer p.next()
+	for _, tok := range tokens {
+		if p.curTok == tok {
+			return p.curTok, p.curVal
+		}
+	}
+
+	p.assume(false, fmt.Sprintf("Expected %s, got %s", tokens, p.curTok))
+	return TokUnexpected, p.curVal
+}
+
 func (p *Parser) mayNextBe(tok Token) bool {
+	t, v := p.curTok, p.curVal
 	b, _ := p.nextAndBackup()
+	p.curTok, p.curVal = t, v
 	return b == tok
 }
 
@@ -974,10 +1285,10 @@ func (p *Parser) parseFunc() *DefStmt {
 		Params: make([]*ParamExpr, 0),
 	}
 	_, identifier := p.expect(TokIdentifier)
+	funcDef.Type = &IdentExpr{Name: identifier}
+	_, identifier = p.expect(TokIdentifier)
 	funcDef.Name = &IdentExpr{Name: identifier}
 	funcDef.Params = p.parseParams()
-	_, identifier = p.expect(TokIdentifier)
-	funcDef.Type = &IdentExpr{Name: identifier}
 	funcDef.Body = p.parseBlock()
 	defStmt.Stmt = funcDef
 	return defStmt
@@ -1044,7 +1355,7 @@ func (w *ASTWriter) writeExpr(expr Expr) {
 	switch e := expr.(type) {
 	case *CallExpr:
 		_, _ = fmt.Fprintf(w.Writer, "Call[%s]\n", e.Name.Name)
-		for _, param := range e.Params {
+		for _, param := range e.Args {
 			w.indentExpr(w.writeExpr, param)
 		}
 	case *ParamExpr:

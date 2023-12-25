@@ -1,12 +1,40 @@
-# this is first comment line of our language
-fun abc(int a) int {
-    call r_runtime_printf("bu abc fonksiyonunun stringi: %d \n\x00", a)
-    return 6
-}
 
 # main function
-fun main() int {
-    call abc(5*(2*3)/(2+2*3))
-    call abc(7)
+fun int main() {
+    var int a = 1
+    var int b = 2
+    var int choice = -1
+
+    r_runtime_printf("===== Welcome to the calculator =====\n")
+    r_runtime_printf("What do you want to do?\nPlease enter the your choice, please select a number: \n")
+    r_runtime_printf("Press '1' for sum operation\n")
+    r_runtime_printf("Press '2' for subtract operation\n")
+    r_runtime_printf("Press '3' for multiply operation\n")
+    r_runtime_printf("Press '4' for division operation\n")
+    r_runtime_scanf("%d", choice)
+
+    if choice <= 0 && choice > 4 {
+        r_runtime_printf("Invalid choice.\n")
+    } else {
+        r_runtime_printf("First number: ")
+        r_runtime_scanf("%d", a)
+        r_runtime_printf("Second number: ")
+        r_runtime_scanf("%d", b)
+
+
+         if choice == 1 {
+            r_runtime_printf("Sum result: %d", a + b)
+         } else if choice == 2 {
+            r_runtime_printf("Sub result: %d", a - b)
+         } else if choice == 3 {
+            r_runtime_printf("Multiply result: %d", a * b)
+         } else if choice == 4 {
+            r_runtime_printf("Division result: %d", a / b)
+
+         }
+    }
+
+
+
     return 0
 }

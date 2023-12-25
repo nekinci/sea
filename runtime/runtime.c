@@ -19,7 +19,6 @@ int t() {
 int r_runtime_scanf(const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
-    char *abc = "naber\n";
     int r = vscanf(fmt, args);
     va_end(args);
     return r;
