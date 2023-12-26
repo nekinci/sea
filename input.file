@@ -1,8 +1,12 @@
 
+extern fun int sum(int a, int b)
+
 # main function
 fun int main() {
 
-    for true {
+    var bool cond = false
+    var string s = "hello"
+    for cond {
             var int a = 1
             var int b = 2
             var int choice = -1
@@ -31,7 +35,7 @@ fun int main() {
 
 
                  if choice == 1 {
-                    r_runtime_printf("Sum result: %d\n", a + b)
+                    r_runtime_printf("Sum result: %d\n", sum(a, b))
                  } else if choice == 2 {
                     r_runtime_printf("Sub result: %d\n", a - b)
                  } else if choice == 3 {

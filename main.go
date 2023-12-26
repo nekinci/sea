@@ -136,11 +136,15 @@ func (c *Compiler) compileFunc(def *FuncDefStmt) *ir.Func {
 	f := c.module.NewFunc(name, typ, params...)
 	c.funcs[name] = f
 	c.currentFunc = f
-	block := f.NewBlock(entryBlock)
-	c.currentBlock = block
+	if !def.IsExternal {
+		block := f.NewBlock(entryBlock)
+		c.currentBlock = block
 
-	for _, innerStmt := range def.Body.Stmts {
-		c.compileStmt(innerStmt)
+		for _, innerStmt := range def.Body.Stmts {
+			c.compileStmt(innerStmt)
+		}
+	} else {
+		f.Linkage = enum.LinkageExternal
 	}
 
 	return f
@@ -238,7 +242,6 @@ func (c *Compiler) compileForStmt(stmt *ForStmt) {
 
 	c.currentBlock = condBlock
 	condBlock.NewCondBr(c.compileExpr(stmt.Cond), forBlock, funcBlock)
-
 	if stmt.Step != nil {
 		c.currentBlock = stepBlock
 		c.continueBlock = stepBlock
@@ -523,10 +526,11 @@ type IdentExpr struct {
 func (e *IdentExpr) IsExpr() {}
 
 type FuncDefStmt struct {
-	Name   *IdentExpr
-	Type   Expr
-	Params []*ParamExpr
-	Body   *BlockStmt
+	Name       *IdentExpr
+	Type       Expr
+	Params     []*ParamExpr
+	Body       *BlockStmt
+	IsExternal bool
 }
 
 func (f *FuncDefStmt) IsStmt() {}
@@ -689,56 +693,6 @@ func clangCompile(path, runtimePath string, runBinary bool, outputForwarding boo
 }
 
 /// Lexer and Parser
-
-type Token string
-
-const (
-	EOF              Token = "<eof>"
-	TokPlus          Token = "+"
-	TokMinus         Token = "-"
-	TokMultiply      Token = "*"
-	TokDivision      Token = "/"
-	TokMod           Token = "%"
-	TokEqual         Token = "=="
-	TokIdentifier    Token = "<identifier>"
-	TokNumber        Token = "<number_literal>"
-	TokString        Token = "<string_literal>"
-	TokVar           Token = "var"
-	TokAssign        Token = "="
-	TokColon         Token = ":"
-	TokSemicolon     Token = ";"
-	TokDef           Token = "def"
-	TokFun           Token = "fun"
-	TokLParen        Token = "("
-	TokRParen        Token = ")"
-	TokComma         Token = ","
-	TokLBrace        Token = "{"
-	TokRBrace        Token = "}"
-	TokUnexpected    Token = "<unexpected>"
-	TokReturn        Token = "return"
-	TokSingleComment Token = "#"
-	TokMultiComment  Token = "%"
-	TokNot           Token = "!"
-	TokTrue          Token = "true"
-	TokFalse         Token = "false"
-	TokLShift        Token = "<<"
-	TokRShift        Token = ">>"
-	TokGt            Token = ">"
-	TokGte           Token = ">="
-	TokLt            Token = "<"
-	TokLte           Token = "<="
-	TokAnd           Token = "&&"
-	TokBAnd          Token = "&"
-	TokOr            Token = "||"
-	TokBOr           Token = "|"
-	TokXor           Token = "^"
-	TokNEqual        Token = "!="
-	TokIf            Token = "if"
-	TokElse          Token = "else"
-	TokFor           Token = "for"
-	TokContinue      Token = "continue"
-	TokBreak         Token = "break"
-)
 
 func (t Token) String() string {
 	return string(t)
@@ -921,6 +875,10 @@ func (l *Lexer) tok() Token {
 			return TokBreak
 		case "continue":
 			return TokContinue
+		case "extern":
+			return TokExtern
+		case "struct":
+			return TokStruct
 		default:
 			return TokIdentifier
 		}
@@ -1118,6 +1076,13 @@ func (p *Parser) parseFor() *ForStmt {
 func (p *Parser) parseStmt() Stmt {
 
 	switch p.curTok {
+	case TokExtern:
+		if p.mayNextBe(TokFun) {
+			return p.parseFunc()
+		} else if p.mayNextBe(TokVar) {
+			return p.parseVar()
+		}
+		p.assume(false, "extern cannot be combined except fun and var")
 	case TokDef:
 		return p.parseDef()
 	case TokFun:
@@ -1416,18 +1381,28 @@ func (p *Parser) mayNextBe(tok Token) bool {
 }
 
 func (p *Parser) parseFunc() *DefStmt {
+
+	var isExternal bool
+	if p.curTok == TokExtern {
+		isExternal = true
+		p.expect(TokExtern)
+	}
+
 	p.expect(TokFun)
 	defStmt := &DefStmt{}
 
 	funcDef := &FuncDefStmt{
-		Params: make([]*ParamExpr, 0),
+		Params:     make([]*ParamExpr, 0),
+		IsExternal: isExternal,
 	}
 	_, identifier := p.expect(TokIdentifier)
 	funcDef.Type = &IdentExpr{Name: identifier}
 	_, identifier = p.expect(TokIdentifier)
 	funcDef.Name = &IdentExpr{Name: identifier}
 	funcDef.Params = p.parseParams()
-	funcDef.Body = p.parseBlock()
+	if !isExternal {
+		funcDef.Body = p.parseBlock()
+	}
 	defStmt.Stmt = funcDef
 	return defStmt
 }
@@ -1478,8 +1453,10 @@ func (w *ASTWriter) writeStmt(stmt Stmt) {
 		for _, param := range s.Params {
 			w.indentExpr(w.writeExpr, param)
 		}
-		for _, stmt := range s.Body.Stmts {
-			w.indentStmt(w.writeStmt, stmt)
+		if !s.IsExternal {
+			for _, stmt := range s.Body.Stmts {
+				w.indentStmt(w.writeStmt, stmt)
+			}
 		}
 	case *ExprStmt:
 		w.indentExpr(w.writeExpr, s.Expr)

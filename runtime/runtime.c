@@ -11,6 +11,10 @@ int r_runtime_printf(const char* fmt, ...) {
     return r;
 }
 
+int sum(int a, int b) {
+    return a +b;
+}
+
 void r_runtime_exit(int status) {
     exit(status);
 }

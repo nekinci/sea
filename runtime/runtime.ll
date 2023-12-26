@@ -28,6 +28,18 @@ declare i32 @vprintf(ptr noundef, ptr noundef) #2
 declare void @llvm.va_end(ptr) #1
 
 ; Function Attrs: noinline nounwind optnone ssp uwtable(sync)
+define i32 @sum(i32 noundef %0, i32 noundef %1) #0 {
+  %3 = alloca i32, align 4
+  %4 = alloca i32, align 4
+  store i32 %0, ptr %3, align 4
+  store i32 %1, ptr %4, align 4
+  %5 = load i32, ptr %3, align 4
+  %6 = load i32, ptr %4, align 4
+  %7 = add nsw i32 %5, %6
+  ret i32 %7
+}
+
+; Function Attrs: noinline nounwind optnone ssp uwtable(sync)
 define void @r_runtime_exit(i32 noundef %0) #0 {
   %2 = alloca i32, align 4
   store i32 %0, ptr %2, align 4
