@@ -26,13 +26,15 @@ func assert(cond bool, msg string) {
 }
 
 type Compiler struct {
-	module    *ir.Module
-	variables map[string]value.Value
-	block     *ir.Block
-	fun       *ir.Func
-	funcs     map[string]*ir.Func
-	types     map[string]types.Type
-	pkg       *Package
+	module        *ir.Module
+	variables     map[string]value.Value
+	block         *ir.Block
+	breakBlock    *ir.Block
+	continueBlock *ir.Block
+	fun           *ir.Func
+	funcs         map[string]*ir.Func
+	types         map[string]types.Type
+	pkg           *Package
 }
 
 func (c *Compiler) compile() {
@@ -42,10 +44,6 @@ func (c *Compiler) compile() {
 		c.compileStmt(stmt)
 	}
 
-}
-
-func (c *Compiler) compileStmt(stmt Stmt) {
-	c.stmt(stmt)
 }
 
 func (c *Compiler) initBuiltinTypes() {
@@ -100,7 +98,7 @@ func (c *Compiler) defineType(expr Expr) types.Type {
 	panic("TODO")
 }
 
-func (c *Compiler) defineVar(stmt *VarDefStmt) {
+func (c *Compiler) compileVarDef(stmt *VarDefStmt) {
 	assert(c.variables != nil, "un-initialized variable map")
 	assert(c.block != nil, "block cannot be nil")
 	block := c.block
@@ -110,11 +108,11 @@ func (c *Compiler) defineVar(stmt *VarDefStmt) {
 	c.variables[stmt.Name.Name] = ptr
 
 	if stmt.Init != nil {
-		block.NewStore(c.expr(stmt.Init), ptr)
+		block.NewStore(c.compileExpr(stmt.Init), ptr)
 	}
 }
 
-func (c *Compiler) newFunc(def *FuncDefStmt) *ir.Func {
+func (c *Compiler) compileFunc(def *FuncDefStmt) *ir.Func {
 	assert(def.Name != nil, "type checker has to handle this")
 	assert(def.Name.Name != "", "name can't be empty")
 	name := def.Name.Name
@@ -127,7 +125,7 @@ func (c *Compiler) newFunc(def *FuncDefStmt) *ir.Func {
 		param := ir.NewParam(def.Name.Name, typ2)
 		params = append(params, param)
 
-		// TODO merge with defineVar function
+		// TODO merge with compileVarDef function
 		c.variables[def.Name.Name] = param
 	}
 	f := c.module.NewFunc(name, typ, params...)
@@ -137,38 +135,44 @@ func (c *Compiler) newFunc(def *FuncDefStmt) *ir.Func {
 	c.block = block
 
 	for _, innerStmt := range def.Body.Stmts {
-		c.stmt(innerStmt)
+		c.compileStmt(innerStmt)
 	}
 
 	return f
 }
 
-func (c *Compiler) stmt(stmt Stmt) {
+func (c *Compiler) compileStmt(stmt Stmt) {
 	switch innerStmt := stmt.(type) {
 	case *ReturnStmt:
-		c.block.NewRet(c.expr(innerStmt.Value))
+		c.block.NewRet(c.compileExpr(innerStmt.Value))
+	case *BreakStmt:
+		c.block.NewBr(c.breakBlock)
+	case *ContinueStmt:
+		c.block.NewBr(c.continueBlock)
 	case *DefStmt:
-		c.stmt(innerStmt.Stmt)
+		c.compileStmt(innerStmt.Stmt)
 	case *ExprStmt:
-		c.expr(innerStmt.Expr)
+		c.compileExpr(innerStmt.Expr)
 	case *IfStmt:
-		c.ifStmt(innerStmt)
+		c.compileIfStmt(innerStmt)
 	case *FuncDefStmt:
-		c.newFunc(innerStmt)
+		c.compileFunc(innerStmt)
 	case *VarDefStmt:
-		c.defineVar(innerStmt)
+		c.compileVarDef(innerStmt)
+	case *ForStmt:
+		c.compileForStmt(innerStmt)
 	case *BlockStmt:
 		for _, innerStmt := range innerStmt.Stmts {
-			c.stmt(innerStmt)
+			c.compileStmt(innerStmt)
 		}
 	default:
-		panic("unreachable stmt on compiler")
+		panic("unreachable compileStmt on compiler")
 
 	}
 }
 
-func (c *Compiler) ifStmt(stmt *IfStmt) {
-	cond := c.expr(stmt.Cond)
+func (c *Compiler) compileIfStmt(stmt *IfStmt) {
+	cond := c.compileExpr(stmt.Cond)
 	thenBlock := c.fun.NewBlock("")
 	continueBlock := c.fun.NewBlock("")
 	var elseBlock *ir.Block = continueBlock
@@ -178,7 +182,7 @@ func (c *Compiler) ifStmt(stmt *IfStmt) {
 
 	c.block.NewCondBr(cond, thenBlock, elseBlock)
 	c.block = thenBlock
-	c.stmt(stmt.Then)
+	c.compileStmt(stmt.Then)
 
 	if thenBlock.Term == nil {
 		thenBlock.NewBr(continueBlock)
@@ -196,6 +200,54 @@ func (c *Compiler) ifStmt(stmt *IfStmt) {
 	c.block = continueBlock
 }
 
+/*
+	funcBlock = 1
+	initBlock = 2
+    condBlock = 3
+    forBlock = 4
+
+	initBlock -> condBlock ->  forBlock -> condBlock
+							-> funcBlock
+
+	initBlock -> condBlock ->  forBlock -> ifBlock -> continueBlock -> condBlock
+							-> funcBlock
+*/
+
+func (c *Compiler) compileForStmt(stmt *ForStmt) {
+	funcBlock := c.fun.NewBlock("")
+	initBlock := c.fun.NewBlock("")
+	forBlock := c.fun.NewBlock("")
+	condBlock := c.fun.NewBlock("")
+
+	c.continueBlock = condBlock
+	c.breakBlock = funcBlock
+
+	defer func() {
+		c.continueBlock = nil
+		c.breakBlock = nil
+	}()
+
+	c.block.NewBr(initBlock)
+	c.block = initBlock
+	if stmt.Init != nil {
+		c.compileStmt(stmt.Init)
+	}
+	initBlock.NewBr(condBlock)
+	//todo do not forget step compileExpr
+	c.block = condBlock
+	condBlock.NewCondBr(c.compileExpr(stmt.Cond), forBlock, funcBlock)
+	c.block = forBlock
+	c.compileStmt(stmt.Body)
+	if c.block != forBlock && c.block.Term == nil {
+		c.block.NewBr(condBlock)
+	}
+	if forBlock.Term == nil {
+		c.block.NewBr(condBlock)
+	}
+
+	c.block = funcBlock
+}
+
 func (c *Compiler) getVariable(name string) value.Value {
 	if v, ok := c.variables[name]; ok {
 		return v
@@ -207,12 +259,11 @@ func (c *Compiler) call(expr *CallExpr) value.Value {
 	b := c.block
 
 	fun := c.getFunc(expr.Name.Name)
-
 	isScanfCall := expr.Name.Name == "r_runtime_scanf"
 
 	args := make([]value.Value, 0)
 	for i, e := range expr.Args {
-		arg := c.expr(e)
+		arg := c.compileExpr(e)
 		// TODO: it is workaround, make it better
 		if isScanfCall && i != 0 {
 			args = append(args, arg.(*ir.InstLoad).Src)
@@ -224,11 +275,11 @@ func (c *Compiler) call(expr *CallExpr) value.Value {
 	return b.NewCall(fun, args...)
 }
 
-func (c *Compiler) expr(expr Expr) value.Value {
+func (c *Compiler) compileExpr(expr Expr) value.Value {
 	switch expr := expr.(type) {
 	case *BinaryExpr:
-		left := c.expr(expr.Left)
-		right := c.expr(expr.Right)
+		left := c.compileExpr(expr.Left)
+		right := c.compileExpr(expr.Right)
 		return generateOperation(c.block, left, right, expr.Op)
 	case *NumberExpr:
 		return getI32Constant(expr.Value)
@@ -255,17 +306,21 @@ func (c *Compiler) expr(expr Expr) value.Value {
 			panic("TODO:")
 		}
 	case *ParenExpr:
-		return c.expr(expr.Expr)
+		return c.compileExpr(expr.Expr)
 	case *BoolExpr:
 		return constant.NewBool(expr.Value)
 	case *UnaryExpr:
-		right := c.expr(expr.Right)
+		right := c.compileExpr(expr.Right)
 		switch expr.Op {
 		case Sub:
 			return c.block.NewMul(constant.NewInt(types.I32, -1), right)
 		default:
 			panic("Unreachable unary expression op = " + expr.Op.String())
 		}
+	case *AssignExpr:
+		right := c.compileExpr(expr.Expr)
+		c.block.NewStore(right, c.getVariable(expr.Name.Name))
+		return c.compileExpr(expr.Name)
 	default:
 		panic("unreachable")
 	}
@@ -288,6 +343,7 @@ const (
 	Not
 	And
 	Band
+	Or
 )
 
 func (o Operation) String() string {
@@ -363,6 +419,8 @@ func generateOperation(block *ir.Block, value1, value2 value.Value, op Operation
 		return block.NewICmp(enum.IPredSLE, value1, value2)
 	case And:
 		return block.NewAnd(value1, value2)
+	case Or:
+		return block.NewOr(value1, value2)
 	}
 
 	panic("unreachable")
@@ -408,6 +466,13 @@ type UnaryExpr struct {
 	Op    Operation
 	Right Expr
 }
+
+type AssignExpr struct {
+	Name *IdentExpr
+	Expr Expr
+}
+
+func (a *AssignExpr) IsExpr() {}
 
 func (u *UnaryExpr) IsExpr() {}
 
@@ -475,15 +540,34 @@ type Stmt interface {
 
 type IfStmt struct {
 	Cond Expr
-	Then Stmt // what about single line un-blocked stmt?
+	Then Stmt // what about single line un-blocked compileStmt?
 	Else Stmt
 }
+
+type ForStmt struct {
+	Init Stmt
+	Cond Expr
+	Step Expr
+	Body Stmt
+}
+
+func (f *ForStmt) IsStmt() {}
 
 func (e *IfStmt) IsStmt() {}
 
 type ReturnStmt struct {
 	Value Expr
 }
+
+// BreakStmt TODO support labels
+type BreakStmt struct {
+}
+
+func (b *BreakStmt) IsStmt() {}
+
+type ContinueStmt struct{}
+
+func (c *ContinueStmt) IsStmt() {}
 
 func (e *ReturnStmt) IsStmt() {}
 
@@ -521,7 +605,7 @@ func main() {
 
 	compiler := &Compiler{}
 
-	// read expr from file
+	// read compileExpr from file
 	file, err := os.ReadFile("./input.file")
 	parser := NewParser("./input.file")
 	//parser.printTokens()
@@ -609,6 +693,7 @@ const (
 	TokVar           Token = "var"
 	TokAssign        Token = "="
 	TokColon         Token = ":"
+	TokSemicolon     Token = ";"
 	TokDef           Token = "def"
 	TokFun           Token = "fun"
 	TokLParen        Token = "("
@@ -769,7 +854,11 @@ func (l *Lexer) tok() Token {
 		return TokNumber
 	case c == '+' || c == '-' || c == '*' || c == '/' || c == '%':
 		if c == '/' && l.inputLen > l.pos+1 && l.input[l.pos+1] == '*' {
-			l.skipBlockComment()
+			l.pos += 2
+			for l.pos+1 < l.inputLen && !(l.input[l.pos] == '*' && l.input[l.pos+1] == '/') {
+				l.pos++
+			}
+			l.pos += 2
 			return l.tok()
 		}
 		return l.operatorToken()
@@ -788,6 +877,9 @@ func (l *Lexer) tok() Token {
 	case c == ',':
 		l.pos++
 		return TokComma
+	case c == ';':
+		l.pos++
+		return TokSemicolon
 	case unicode.IsLetter(rune(c)):
 
 		for l.pos < l.inputLen && (unicode.IsDigit(rune(l.input[l.pos])) || unicode.IsLetter(rune(l.input[l.pos])) || l.input[l.pos] == '_') {
@@ -812,6 +904,10 @@ func (l *Lexer) tok() Token {
 			return TokElse
 		case "for":
 			return TokFor
+		case "break":
+			return TokBreak
+		case "continue":
+			return TokContinue
 		default:
 			return TokIdentifier
 		}
@@ -982,8 +1078,16 @@ func (p *Parser) parseIf() *IfStmt {
 	return ifStmt
 }
 
-func (p *Parser) parseFor() Stmt {
-	panic("TODO!")
+func (p *Parser) parseFor() *ForStmt {
+	p.expect(TokFor)
+	forStmt := &ForStmt{}
+
+	forStmt.Cond = p.parseExpr()
+	forStmt.Body = p.parseStmt()
+
+	// for now, only condition blocks
+
+	return forStmt
 }
 
 func (p *Parser) parseStmt() Stmt {
@@ -995,6 +1099,13 @@ func (p *Parser) parseStmt() Stmt {
 		return p.parseFunc()
 	case TokLBrace:
 		return p.parseBlock()
+	case TokBreak:
+		p.expect(TokBreak)
+		// TODO handle labels
+		return &BreakStmt{}
+	case TokContinue:
+		p.expect(TokContinue)
+		return &ContinueStmt{}
 	case TokReturn:
 		p.expect(TokReturn)
 		returnStmt := &ReturnStmt{}
@@ -1150,6 +1261,8 @@ func (p *Parser) op(tok Token) Operation {
 		return Neq
 	case TokAnd:
 		return And
+	case TokOr:
+		return Or
 	default:
 		panic("unreachable op=" + string(tok))
 	}
@@ -1182,7 +1295,7 @@ func (p *Parser) parseSimpleExpr() Expr {
 	case TokIdentifier:
 		return p.parseIdentExpr()
 	default:
-		panic("unreachable tok=" + string(p.curTok))
+		panic("unreachable tok -> " + string(p.curTok))
 
 	}
 }
@@ -1197,6 +1310,12 @@ func (p *Parser) parseIdentExpr() Expr {
 		p.expect(TokRParen)
 
 		return callExpr
+	}
+
+	if p.curTok == TokAssign {
+		p.expect(TokAssign)
+		assignExpr := &AssignExpr{&IdentExpr{Name: identifier}, p.parseExpr()}
+		return assignExpr
 	}
 
 	return &IdentExpr{Name: identifier}

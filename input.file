@@ -1,7 +1,8 @@
 
 # main function
 fun int main() {
-    var int a = 1
+   /*
+   var int a = 1
     var int b = 2
     var int choice = -1
 
@@ -35,6 +36,19 @@ fun int main() {
     }
 
 
+*/
+    var int i = 0
+    for true {
+        i = i + 1
+        if i == 3 {
+            continue
+        }
 
+        r_runtime_printf("%d\n", i)
+
+         if i == 10 {
+                    break
+         }
+    }
     return 0
 }
