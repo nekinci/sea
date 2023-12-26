@@ -61,22 +61,26 @@ func (c *Compiler) initBuiltinTypes() {
 
 func (c *Compiler) initBuiltinFuncs() {
 	module := c.module
-	runtimePrintf := module.NewFunc("r_runtime_printf", types.I32,
-		ir.NewParam("", types.NewPointer(types.I8)))
-	runtimePrintf.Sig.Variadic = true
-	runtimePrintf.Linkage = enum.LinkageExternal
 
 	if c.funcs == nil {
 		c.funcs = make(map[string]*ir.Func)
 	}
+
+	runtimePrintf := module.NewFunc("r_runtime_printf", types.I32,
+		ir.NewParam("", types.NewPointer(types.I8)))
+	runtimePrintf.Sig.Variadic = true
+	runtimePrintf.Linkage = enum.LinkageExternal
 
 	c.funcs["r_runtime_printf"] = runtimePrintf
 
 	runtimeScanf := module.NewFunc("r_runtime_scanf", types.I32, ir.NewParam("", types.NewPointer(types.I8)))
 	runtimeScanf.Sig.Variadic = true
 	runtimeScanf.Linkage = enum.LinkageExternal
-
 	c.funcs["r_runtime_scanf"] = runtimeScanf
+
+	runtimeExit := module.NewFunc("r_runtime_exit", types.Void, ir.NewParam("", types.I32))
+	runtimeExit.Linkage = enum.LinkageExternal
+	c.funcs["r_runtime_exit"] = runtimeExit
 
 }
 
@@ -211,11 +215,11 @@ func (c *Compiler) compileIfStmt(stmt *IfStmt) {
 */
 
 func (c *Compiler) compileForStmt(stmt *ForStmt) {
-	funcBlock := c.currentFunc.NewBlock("")
-	initBlock := c.currentFunc.NewBlock("")
-	forBlock := c.currentFunc.NewBlock("")
-	condBlock := c.currentFunc.NewBlock("")
-	stepBlock := c.currentFunc.NewBlock("")
+	funcBlock := c.currentFunc.NewBlock("funcBlock")
+	initBlock := c.currentFunc.NewBlock("initBlock")
+	forBlock := c.currentFunc.NewBlock("forBlock")
+	condBlock := c.currentFunc.NewBlock("condBlock")
+	stepBlock := c.currentFunc.NewBlock("StepBlock")
 
 	c.continueBlock = condBlock
 	c.breakBlock = funcBlock
@@ -239,6 +243,8 @@ func (c *Compiler) compileForStmt(stmt *ForStmt) {
 		c.currentBlock = stepBlock
 		c.continueBlock = stepBlock
 		c.compileExpr(stmt.Step)
+		stepBlock.NewBr(condBlock)
+	} else {
 		stepBlock.NewBr(condBlock)
 	}
 

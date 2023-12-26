@@ -11,6 +11,10 @@ int r_runtime_printf(const char* fmt, ...) {
     return r;
 }
 
+void r_runtime_exit(int status) {
+    exit(status);
+}
+
 int t() {
     int r = 11;
     return 32;
