@@ -28,13 +28,14 @@ func assert(cond bool, msg string) {
 type Compiler struct {
 	module        *ir.Module
 	variables     map[string]value.Value
-	block         *ir.Block
+	currentBlock  *ir.Block
 	breakBlock    *ir.Block
 	continueBlock *ir.Block
-	fun           *ir.Func
-	funcs         map[string]*ir.Func
-	types         map[string]types.Type
-	pkg           *Package
+
+	currentFunc *ir.Func
+	funcs       map[string]*ir.Func
+	types       map[string]types.Type
+	pkg         *Package
 }
 
 func (c *Compiler) compile() {
@@ -100,8 +101,8 @@ func (c *Compiler) defineType(expr Expr) types.Type {
 
 func (c *Compiler) compileVarDef(stmt *VarDefStmt) {
 	assert(c.variables != nil, "un-initialized variable map")
-	assert(c.block != nil, "block cannot be nil")
-	block := c.block
+	assert(c.currentBlock != nil, "currentBlock cannot be nil")
+	block := c.currentBlock
 
 	typ := c.resolveType(stmt.Type)
 	ptr := block.NewAlloca(typ)
@@ -130,9 +131,9 @@ func (c *Compiler) compileFunc(def *FuncDefStmt) *ir.Func {
 	}
 	f := c.module.NewFunc(name, typ, params...)
 	c.funcs[name] = f
-	c.fun = f
+	c.currentFunc = f
 	block := f.NewBlock(entryBlock)
-	c.block = block
+	c.currentBlock = block
 
 	for _, innerStmt := range def.Body.Stmts {
 		c.compileStmt(innerStmt)
@@ -144,11 +145,11 @@ func (c *Compiler) compileFunc(def *FuncDefStmt) *ir.Func {
 func (c *Compiler) compileStmt(stmt Stmt) {
 	switch innerStmt := stmt.(type) {
 	case *ReturnStmt:
-		c.block.NewRet(c.compileExpr(innerStmt.Value))
+		c.currentBlock.NewRet(c.compileExpr(innerStmt.Value))
 	case *BreakStmt:
-		c.block.NewBr(c.breakBlock)
+		c.currentBlock.NewBr(c.breakBlock)
 	case *ContinueStmt:
-		c.block.NewBr(c.continueBlock)
+		c.currentBlock.NewBr(c.continueBlock)
 	case *DefStmt:
 		c.compileStmt(innerStmt.Stmt)
 	case *ExprStmt:
@@ -173,15 +174,15 @@ func (c *Compiler) compileStmt(stmt Stmt) {
 
 func (c *Compiler) compileIfStmt(stmt *IfStmt) {
 	cond := c.compileExpr(stmt.Cond)
-	thenBlock := c.fun.NewBlock("")
-	continueBlock := c.fun.NewBlock("")
+	thenBlock := c.currentFunc.NewBlock("")
+	continueBlock := c.currentFunc.NewBlock("")
 	var elseBlock *ir.Block = continueBlock
 	if stmt.Else != nil {
-		elseBlock = c.fun.NewBlock("")
+		elseBlock = c.currentFunc.NewBlock("")
 	}
 
-	c.block.NewCondBr(cond, thenBlock, elseBlock)
-	c.block = thenBlock
+	c.currentBlock.NewCondBr(cond, thenBlock, elseBlock)
+	c.currentBlock = thenBlock
 	c.compileStmt(stmt.Then)
 
 	if thenBlock.Term == nil {
@@ -189,35 +190,32 @@ func (c *Compiler) compileIfStmt(stmt *IfStmt) {
 	}
 
 	if stmt.Else != nil {
-		c.block = elseBlock
+		c.currentBlock = elseBlock
 		c.compileStmt(stmt.Else)
 	}
 
-	if c.block.Term == nil {
-		c.block.NewBr(continueBlock)
+	if c.currentBlock.Term == nil {
+		c.currentBlock.NewBr(continueBlock)
 	}
 
-	c.block = continueBlock
+	c.currentBlock = continueBlock
 }
 
 /*
-	funcBlock = 1
-	initBlock = 2
-    condBlock = 3
-    forBlock = 4
 
-	initBlock -> condBlock ->  forBlock -> condBlock
+	initBlock -> condBlock ->  forBlock -> stepBlock -> condBlock
 							-> funcBlock
 
-	initBlock -> condBlock ->  forBlock -> ifBlock -> continueBlock -> condBlock
+	initBlock -> condBlock ->  forBlock -> ifBlock -> continueBlock -> stepBlock -> condBlock
 							-> funcBlock
 */
 
 func (c *Compiler) compileForStmt(stmt *ForStmt) {
-	funcBlock := c.fun.NewBlock("")
-	initBlock := c.fun.NewBlock("")
-	forBlock := c.fun.NewBlock("")
-	condBlock := c.fun.NewBlock("")
+	funcBlock := c.currentFunc.NewBlock("")
+	initBlock := c.currentFunc.NewBlock("")
+	forBlock := c.currentFunc.NewBlock("")
+	condBlock := c.currentFunc.NewBlock("")
+	stepBlock := c.currentFunc.NewBlock("")
 
 	c.continueBlock = condBlock
 	c.breakBlock = funcBlock
@@ -227,25 +225,34 @@ func (c *Compiler) compileForStmt(stmt *ForStmt) {
 		c.breakBlock = nil
 	}()
 
-	c.block.NewBr(initBlock)
-	c.block = initBlock
+	c.currentBlock.NewBr(initBlock)
+	c.currentBlock = initBlock
 	if stmt.Init != nil {
 		c.compileStmt(stmt.Init)
 	}
 	initBlock.NewBr(condBlock)
-	//todo do not forget step compileExpr
-	c.block = condBlock
+
+	c.currentBlock = condBlock
 	condBlock.NewCondBr(c.compileExpr(stmt.Cond), forBlock, funcBlock)
-	c.block = forBlock
-	c.compileStmt(stmt.Body)
-	if c.block != forBlock && c.block.Term == nil {
-		c.block.NewBr(condBlock)
-	}
-	if forBlock.Term == nil {
-		c.block.NewBr(condBlock)
+
+	if stmt.Step != nil {
+		c.currentBlock = stepBlock
+		c.continueBlock = stepBlock
+		c.compileExpr(stmt.Step)
+		stepBlock.NewBr(condBlock)
 	}
 
-	c.block = funcBlock
+	c.currentBlock = forBlock
+
+	c.compileStmt(stmt.Body)
+	if c.currentBlock != forBlock && c.currentBlock.Term == nil {
+		c.currentBlock.NewBr(c.continueBlock)
+	}
+	if forBlock.Term == nil {
+		c.currentBlock.NewBr(c.continueBlock)
+	}
+
+	c.currentBlock = funcBlock
 }
 
 func (c *Compiler) getVariable(name string) value.Value {
@@ -256,7 +263,7 @@ func (c *Compiler) getVariable(name string) value.Value {
 }
 
 func (c *Compiler) call(expr *CallExpr) value.Value {
-	b := c.block
+	b := c.currentBlock
 
 	fun := c.getFunc(expr.Name.Name)
 	isScanfCall := expr.Name.Name == "r_runtime_scanf"
@@ -280,7 +287,7 @@ func (c *Compiler) compileExpr(expr Expr) value.Value {
 	case *BinaryExpr:
 		left := c.compileExpr(expr.Left)
 		right := c.compileExpr(expr.Right)
-		return generateOperation(c.block, left, right, expr.Op)
+		return generateOperation(c.currentBlock, left, right, expr.Op)
 	case *NumberExpr:
 		return getI32Constant(expr.Value)
 	case *StringExpr:
@@ -301,7 +308,7 @@ func (c *Compiler) compileExpr(expr Expr) value.Value {
 		case *ir.Param:
 			return v
 		case *ir.InstAlloca:
-			return c.block.NewLoad(v.ElemType, v)
+			return c.currentBlock.NewLoad(v.ElemType, v)
 		default:
 			panic("TODO:")
 		}
@@ -313,13 +320,13 @@ func (c *Compiler) compileExpr(expr Expr) value.Value {
 		right := c.compileExpr(expr.Right)
 		switch expr.Op {
 		case Sub:
-			return c.block.NewMul(constant.NewInt(types.I32, -1), right)
+			return c.currentBlock.NewMul(constant.NewInt(types.I32, -1), right)
 		default:
 			panic("Unreachable unary expression op = " + expr.Op.String())
 		}
 	case *AssignExpr:
 		right := c.compileExpr(expr.Expr)
-		c.block.NewStore(right, c.getVariable(expr.Name.Name))
+		c.currentBlock.NewStore(right, c.getVariable(expr.Name.Name))
 		return c.compileExpr(expr.Name)
 	default:
 		panic("unreachable")
@@ -1082,7 +1089,19 @@ func (p *Parser) parseFor() *ForStmt {
 	p.expect(TokFor)
 	forStmt := &ForStmt{}
 
+	// TODO add support multiple variable stmts
+	if p.curTok == TokVar {
+		varDefStmt := p.parseVar()
+		forStmt.Init = varDefStmt
+		p.expect(TokSemicolon)
+	}
+
 	forStmt.Cond = p.parseExpr()
+	if p.curTok == TokSemicolon {
+		p.expect(TokSemicolon)
+		forStmt.Step = p.parseExpr()
+	}
+
 	forStmt.Body = p.parseStmt()
 
 	// for now, only condition blocks
@@ -1117,12 +1136,6 @@ func (p *Parser) parseStmt() Stmt {
 		return p.parseIf()
 	case TokFor:
 		return p.parseFor()
-	case TokIdentifier:
-		if p.mayNextBe(TokIdentifier) {
-
-		} else if p.mayNextBe(TokAssign) {
-
-		}
 	}
 
 	return p.parseExprStmt()

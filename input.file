@@ -37,18 +37,8 @@ fun int main() {
 
 
 */
-    var int i = 0
-    for true {
-        i = i + 1
-        if i == 3 {
-            continue
-        }
-
+    for var int i = 0; i < 10; i = i + 3 {
         r_runtime_printf("%d\n", i)
-
-         if i == 10 {
-                    break
-         }
     }
     return 0
 }
