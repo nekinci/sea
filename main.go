@@ -57,6 +57,11 @@ func (c *Compiler) initBuiltinTypes() {
 	c.types["void"] = types.Void
 	c.types["int"] = types.I32
 	c.types["bool"] = types.I1
+
+	stringStruct := types.NewStruct(types.NewPointer(types.I8), types.I64)
+	def := c.module.NewTypeDef("string", stringStruct)
+	c.types["string"] = def
+
 }
 
 func (c *Compiler) initBuiltinFuncs() {
@@ -82,6 +87,23 @@ func (c *Compiler) initBuiltinFuncs() {
 	runtimeExit.Linkage = enum.LinkageExternal
 	c.funcs["r_runtime_exit"] = runtimeExit
 
+	printfInternal := module.NewFunc("printf_internal", types.I32, ir.NewParam("", c.types["string"]))
+	printfInternal.Sig.Variadic = true
+	printfInternal.Linkage = enum.LinkageExternal
+	c.funcs["printf_internal"] = printfInternal
+
+	makeString := module.NewFunc("make_string", c.types["string"], ir.NewParam("", types.NewPointer(types.I8)))
+	makeString.Linkage = enum.LinkageExternal
+	c.funcs["make_string"] = makeString
+
+	scanfInternal := module.NewFunc("scanf_internal", types.I32, ir.NewParam("", c.types["string"]))
+	scanfInternal.Sig.Variadic = true
+	scanfInternal.Linkage = enum.LinkageExternal
+	c.funcs["scanf_internal"] = scanfInternal
+
+	strlenInternal := module.NewFunc("strlen_internal", types.I64, ir.NewParam("", c.types["string"]))
+	strlenInternal.Linkage = enum.LinkageExternal
+	c.funcs["strlen_internal"] = strlenInternal
 }
 
 func (c *Compiler) resolveType(expr Expr) types.Type {
@@ -150,6 +172,16 @@ func (c *Compiler) compileFunc(def *FuncDefStmt) *ir.Func {
 	return f
 }
 
+func (c *Compiler) compileStructDef(def *StructDefStmt) {
+	str := types.NewStruct()
+	for _, field := range def.Fields {
+		typ := c.resolveType(field.Type)
+		str.Fields = append(str.Fields, typ)
+	}
+	td := c.module.NewTypeDef(def.Name.Name, str)
+	c.types[def.Name.Name] = td
+}
+
 func (c *Compiler) compileStmt(stmt Stmt) {
 	switch innerStmt := stmt.(type) {
 	case *ReturnStmt:
@@ -158,8 +190,6 @@ func (c *Compiler) compileStmt(stmt Stmt) {
 		c.currentBlock.NewBr(c.breakBlock)
 	case *ContinueStmt:
 		c.currentBlock.NewBr(c.continueBlock)
-	case *DefStmt:
-		c.compileStmt(innerStmt.Stmt)
 	case *ExprStmt:
 		c.compileExpr(innerStmt.Expr)
 	case *IfStmt:
@@ -170,6 +200,8 @@ func (c *Compiler) compileStmt(stmt Stmt) {
 		c.compileVarDef(innerStmt)
 	case *ForStmt:
 		c.compileForStmt(innerStmt)
+	case *StructDefStmt:
+		c.compileStructDef(innerStmt)
 	case *BlockStmt:
 		for _, innerStmt := range innerStmt.Stmts {
 			c.compileStmt(innerStmt)
@@ -264,7 +296,7 @@ func (c *Compiler) compileForStmt(stmt *ForStmt) {
 	c.currentBlock = funcBlock
 }
 
-func (c *Compiler) getVariable(name string) value.Value {
+func (c *Compiler) getAlloca(name string) value.Value {
 	if v, ok := c.variables[name]; ok {
 		return v
 	}
@@ -275,17 +307,11 @@ func (c *Compiler) call(expr *CallExpr) value.Value {
 	b := c.currentBlock
 
 	fun := c.getFunc(expr.Name.Name)
-	isScanfCall := expr.Name.Name == "r_runtime_scanf"
 
 	args := make([]value.Value, 0)
-	for i, e := range expr.Args {
+	for _, e := range expr.Args {
 		arg := c.compileExpr(e)
-		// TODO: it is workaround, make it better
-		if isScanfCall && i != 0 {
-			args = append(args, arg.(*ir.InstLoad).Src)
-		} else {
-			args = append(args, arg)
-		}
+		args = append(args, arg)
 	}
 
 	return b.NewCall(fun, args...)
@@ -308,11 +334,12 @@ func (c *Compiler) compileExpr(expr Expr) value.Value {
 		strPtr.UnnamedAddr = enum.UnnamedAddrUnnamedAddr
 		var zero = constant.NewInt(types.I8, 0)
 		gep := constant.NewGetElementPtr(v2.Typ, strPtr, zero, zero)
-		return gep
+		return c.currentBlock.NewCall(c.getFunc("make_string"), gep)
+
 	case *CallExpr:
 		return c.call(expr)
 	case *IdentExpr:
-		v := c.getVariable(expr.Name)
+		v := c.getAlloca(expr.Name)
 		switch v := v.(type) {
 		case *ir.Param:
 			return v
@@ -321,6 +348,7 @@ func (c *Compiler) compileExpr(expr Expr) value.Value {
 		default:
 			panic("TODO:")
 		}
+
 	case *ParenExpr:
 		return c.compileExpr(expr.Expr)
 	case *BoolExpr:
@@ -330,12 +358,15 @@ func (c *Compiler) compileExpr(expr Expr) value.Value {
 		switch expr.Op {
 		case Sub:
 			return c.currentBlock.NewMul(constant.NewInt(types.I32, -1), right)
+		case Band:
+			val := c.compileExpr(expr.Right)
+			return val.(*ir.InstLoad).Src
 		default:
 			panic("Unreachable unary expression op = " + expr.Op.String())
 		}
 	case *AssignExpr:
 		right := c.compileExpr(expr.Expr)
-		c.currentBlock.NewStore(right, c.getVariable(expr.Name.Name))
+		c.currentBlock.NewStore(right, c.getAlloca(expr.Name.Name))
 		return c.compileExpr(expr.Name)
 	default:
 		panic("unreachable")
@@ -500,10 +531,6 @@ type BinaryExpr struct {
 
 func (e *BinaryExpr) IsExpr() {}
 
-type DefStmt struct {
-	Stmt
-}
-
 type CallExpr struct {
 	Name *IdentExpr
 	Args []Expr
@@ -534,6 +561,7 @@ type FuncDefStmt struct {
 }
 
 func (f *FuncDefStmt) IsStmt() {}
+func (f *FuncDefStmt) IsDef()  {}
 
 type Node interface{}
 
@@ -544,6 +572,17 @@ type ParamExpr struct {
 
 type BlockStmt struct {
 	Stmts []Stmt
+}
+
+type ImplStmt struct {
+	Stmts   []Stmt
+	Implies []*IdentExpr
+}
+
+func (e *ImplStmt) IsStmt() {}
+
+type DefStmt interface {
+	IsDef()
 }
 
 func (s *BlockStmt) IsStmt() {}
@@ -589,12 +628,24 @@ func (c *ContinueStmt) IsStmt() {}
 func (e *ReturnStmt) IsStmt() {}
 
 type VarDefStmt struct {
-	Name *IdentExpr
-	Type Expr
-	Init Expr
+	Name  *IdentExpr
+	Type  Expr
+	IsPtr bool
+	Init  Expr
 }
 
+func (e *VarDefStmt) IsDef() {}
+
 func (e *VarDefStmt) IsStmt() {}
+
+type StructDefStmt struct {
+	Name   *IdentExpr
+	Fields []*Field
+}
+
+func (s *StructDefStmt) IsDef() {}
+
+func (s *StructDefStmt) IsStmt() {}
 
 type ExprStmt struct {
 	Expr Expr
@@ -687,6 +738,7 @@ func clangCompile(path, runtimePath string, runBinary bool, outputForwarding boo
 		runBinaryCmd.Stderr = os.Stderr
 
 		if err := runBinaryCmd.Run(); err != nil {
+			os.Exit(runBinaryCmd.ProcessState.ExitCode())
 		}
 	}
 
@@ -879,8 +931,8 @@ func (l *Lexer) tok() Token {
 			return TokExtern
 		case "struct":
 			return TokStruct
-		default:
-			return TokIdentifier
+		case "impl":
+			return TokImpl
 		}
 
 		return TokIdentifier
@@ -1019,22 +1071,29 @@ func (p *Parser) parse() *Package {
 
 }
 
-func (p *Parser) parseVar() *DefStmt {
+func (p *Parser) parseVar() *VarDefStmt {
 	p.expect(TokVar)
 	_, typ := p.expect(TokIdentifier)
 	_, name := p.expect(TokIdentifier)
-	varDefStmt := &VarDefStmt{
-		Name: &IdentExpr{Name: name},
-		Type: &IdentExpr{Name: typ},
-		Init: nil,
+
+	isPtr := false
+	if p.curTok == TokMultiply {
+		p.expect(TokMultiply)
+		isPtr = true
 	}
-	def := &DefStmt{varDefStmt}
+
+	varDefStmt := &VarDefStmt{
+		Name:  &IdentExpr{Name: name},
+		Type:  &IdentExpr{Name: typ},
+		Init:  nil,
+		IsPtr: isPtr,
+	}
 
 	if p.curTok == TokAssign {
 		p.expect(TokAssign)
 		varDefStmt.Init = p.parseExpr()
 	}
-	return def
+	return varDefStmt
 }
 
 func (p *Parser) parseIf() *IfStmt {
@@ -1047,6 +1106,40 @@ func (p *Parser) parseIf() *IfStmt {
 		ifStmt.Else = p.parseStmt()
 	}
 	return ifStmt
+}
+
+type Field struct {
+	Name *IdentExpr
+	Type *IdentExpr
+}
+
+func (f *Field) IsExpr() {}
+
+func (p *Parser) parseField() *Field {
+	_, typ := p.expect(TokIdentifier)
+	_, name := p.expect(TokIdentifier)
+	return &Field{
+		Name: &IdentExpr{Name: name},
+		Type: &IdentExpr{Name: typ},
+	}
+}
+
+func (p *Parser) parseStruct() *StructDefStmt {
+	p.expect(TokStruct)
+	_, name := p.expect(TokIdentifier)
+	p.expect(TokLBrace)
+	fields := make([]*Field, 0)
+
+	for p.curTok != TokRBrace {
+		fields = append(fields, p.parseField())
+	}
+
+	p.expect(TokRBrace)
+
+	return &StructDefStmt{
+		Name:   &IdentExpr{Name: name},
+		Fields: fields,
+	}
 }
 
 func (p *Parser) parseFor() *ForStmt {
@@ -1068,8 +1161,6 @@ func (p *Parser) parseFor() *ForStmt {
 
 	forStmt.Body = p.parseStmt()
 
-	// for now, only condition blocks
-
 	return forStmt
 }
 
@@ -1083,8 +1174,6 @@ func (p *Parser) parseStmt() Stmt {
 			return p.parseVar()
 		}
 		p.assume(false, "extern cannot be combined except fun and var")
-	case TokDef:
-		return p.parseDef()
 	case TokFun:
 		return p.parseFunc()
 	case TokLBrace:
@@ -1107,10 +1196,18 @@ func (p *Parser) parseStmt() Stmt {
 		return p.parseIf()
 	case TokFor:
 		return p.parseFor()
+	case TokStruct:
+		return p.parseStruct()
+	case TokImpl:
+		return p.parseImpl()
 	}
 
 	return p.parseExprStmt()
 
+}
+
+func (p *Parser) parseImpl() *ImplStmt {
+	panic("TODO")
 }
 
 func (p *Parser) parseBlock() *BlockStmt {
@@ -1173,6 +1270,8 @@ func (p *Parser) binaryPrecedence(tok Token) int {
 
 func (p *Parser) unaryPrecedence(tok Token) int {
 	switch tok {
+	case TokMultiply, TokBAnd:
+		return 7
 	case TokMinus, TokPlus, TokNot:
 		return 6
 	default:
@@ -1195,7 +1294,7 @@ func (p *Parser) parseBinaryExpr(parentPrecedence int) Expr {
 	var left Expr
 	unaryPrecedence := p.unaryPrecedence(p.curTok)
 	if unaryPrecedence != 0 && unaryPrecedence >= parentPrecedence {
-		tok, _ := p.expectAnyOf(TokMinus, TokNot, TokPlus)
+		tok, _ := p.expectAnyOf(TokMinus, TokNot, TokPlus, TokBAnd)
 		left = &UnaryExpr{
 			Op:    p.op(tok),
 			Right: p.parseBinaryExpr(unaryPrecedence),
@@ -1247,6 +1346,8 @@ func (p *Parser) op(tok Token) Operation {
 		return And
 	case TokOr:
 		return Or
+	case TokBAnd:
+		return Band
 	default:
 		panic("unreachable op=" + string(tok))
 	}
@@ -1318,10 +1419,6 @@ func (p *Parser) parseExprStmt() *ExprStmt {
 	return &ExprStmt{Expr: p.parseExpr()}
 }
 
-func (p *Parser) parseDef() DefStmt {
-	panic("TODO")
-}
-
 func (p *Parser) parseParams() []*ParamExpr {
 	p.expect(TokLParen)
 	params := make([]*ParamExpr, 0)
@@ -1380,7 +1477,7 @@ func (p *Parser) mayNextBe(tok Token) bool {
 	return b == tok
 }
 
-func (p *Parser) parseFunc() *DefStmt {
+func (p *Parser) parseFunc() *FuncDefStmt {
 
 	var isExternal bool
 	if p.curTok == TokExtern {
@@ -1389,7 +1486,6 @@ func (p *Parser) parseFunc() *DefStmt {
 	}
 
 	p.expect(TokFun)
-	defStmt := &DefStmt{}
 
 	funcDef := &FuncDefStmt{
 		Params:     make([]*ParamExpr, 0),
@@ -1403,8 +1499,7 @@ func (p *Parser) parseFunc() *DefStmt {
 	if !isExternal {
 		funcDef.Body = p.parseBlock()
 	}
-	defStmt.Stmt = funcDef
-	return defStmt
+	return funcDef
 }
 
 /*
@@ -1460,8 +1555,6 @@ func (w *ASTWriter) writeStmt(stmt Stmt) {
 		}
 	case *ExprStmt:
 		w.indentExpr(w.writeExpr, s.Expr)
-	case *DefStmt:
-		w.writeStmt(s.Stmt)
 	}
 }
 

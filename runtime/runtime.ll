@@ -3,6 +3,53 @@ source_filename = "./runtime/runtime.c"
 target datalayout = "e-m:o-i64:64-i128:128-n32:64-S128"
 target triple = "arm64-apple-macosx14.0.0"
 
+%struct.string = type { ptr, i64 }
+
+; Function Attrs: noinline nounwind optnone ssp uwtable(sync)
+define [2 x i64] @make_string(ptr noundef %0) #0 {
+  %2 = alloca %struct.string, align 8
+  %3 = alloca ptr, align 8
+  %4 = alloca i64, align 8
+  store ptr %0, ptr %3, align 8
+  %5 = load ptr, ptr %3, align 8
+  %6 = call i64 @strlen(ptr noundef %5)
+  store i64 %6, ptr %4, align 8
+  %7 = load ptr, ptr %3, align 8
+  %8 = getelementptr inbounds %struct.string, ptr %2, i32 0, i32 0
+  store ptr %7, ptr %8, align 8
+  %9 = load i64, ptr %4, align 8
+  %10 = getelementptr inbounds %struct.string, ptr %2, i32 0, i32 1
+  store i64 %9, ptr %10, align 8
+  %11 = load [2 x i64], ptr %2, align 8
+  ret [2 x i64] %11
+}
+
+declare i64 @strlen(ptr noundef) #1
+
+; Function Attrs: noinline nounwind optnone ssp uwtable(sync)
+define i32 @r_runtime_scanf(ptr noundef %0, ...) #0 {
+  %2 = alloca ptr, align 8
+  %3 = alloca ptr, align 8
+  %4 = alloca i32, align 4
+  store ptr %0, ptr %2, align 8
+  call void @llvm.va_start(ptr %3)
+  %5 = load ptr, ptr %2, align 8
+  %6 = load ptr, ptr %3, align 8
+  %7 = call i32 @vscanf(ptr noundef %5, ptr noundef %6)
+  store i32 %7, ptr %4, align 4
+  call void @llvm.va_end(ptr %3)
+  %8 = load i32, ptr %4, align 4
+  ret i32 %8
+}
+
+; Function Attrs: nocallback nofree nosync nounwind willreturn
+declare void @llvm.va_start(ptr) #2
+
+declare i32 @vscanf(ptr noundef, ptr noundef) #1
+
+; Function Attrs: nocallback nofree nosync nounwind willreturn
+declare void @llvm.va_end(ptr) #2
+
 ; Function Attrs: noinline nounwind optnone ssp uwtable(sync)
 define i32 @r_runtime_printf(ptr noundef %0, ...) #0 {
   %2 = alloca ptr, align 8
@@ -19,13 +66,50 @@ define i32 @r_runtime_printf(ptr noundef %0, ...) #0 {
   ret i32 %8
 }
 
-; Function Attrs: nocallback nofree nosync nounwind willreturn
-declare void @llvm.va_start(ptr) #1
+declare i32 @vprintf(ptr noundef, ptr noundef) #1
 
-declare i32 @vprintf(ptr noundef, ptr noundef) #2
+; Function Attrs: noinline nounwind optnone ssp uwtable(sync)
+define i32 @printf_internal([2 x i64] %0, ...) #0 {
+  %2 = alloca %struct.string, align 8
+  %3 = alloca ptr, align 8
+  %4 = alloca i32, align 4
+  store [2 x i64] %0, ptr %2, align 8
+  call void @llvm.va_start(ptr %3)
+  %5 = getelementptr inbounds %struct.string, ptr %2, i32 0, i32 0
+  %6 = load ptr, ptr %5, align 8
+  %7 = load ptr, ptr %3, align 8
+  %8 = call i32 @vprintf(ptr noundef %6, ptr noundef %7)
+  store i32 %8, ptr %4, align 4
+  call void @llvm.va_end(ptr %3)
+  %9 = load i32, ptr %4, align 4
+  ret i32 %9
+}
 
-; Function Attrs: nocallback nofree nosync nounwind willreturn
-declare void @llvm.va_end(ptr) #1
+; Function Attrs: noinline nounwind optnone ssp uwtable(sync)
+define i32 @scanf_internal([2 x i64] %0, ...) #0 {
+  %2 = alloca %struct.string, align 8
+  %3 = alloca ptr, align 8
+  %4 = alloca i32, align 4
+  store [2 x i64] %0, ptr %2, align 8
+  call void @llvm.va_start(ptr %3)
+  %5 = getelementptr inbounds %struct.string, ptr %2, i32 0, i32 0
+  %6 = load ptr, ptr %5, align 8
+  %7 = load ptr, ptr %3, align 8
+  %8 = call i32 @vscanf(ptr noundef %6, ptr noundef %7)
+  store i32 %8, ptr %4, align 4
+  call void @llvm.va_end(ptr %3)
+  %9 = load i32, ptr %4, align 4
+  ret i32 %9
+}
+
+; Function Attrs: noinline nounwind optnone ssp uwtable(sync)
+define i64 @strlen_internal([2 x i64] %0) #0 {
+  %2 = alloca %struct.string, align 8
+  store [2 x i64] %0, ptr %2, align 8
+  %3 = getelementptr inbounds %struct.string, ptr %2, i32 0, i32 1
+  %4 = load i64, ptr %3, align 8
+  ret i64 %4
+}
 
 ; Function Attrs: noinline nounwind optnone ssp uwtable(sync)
 define i32 @sum(i32 noundef %0, i32 noundef %1) #0 {
@@ -51,34 +135,9 @@ define void @r_runtime_exit(i32 noundef %0) #0 {
 ; Function Attrs: noreturn
 declare void @exit(i32 noundef) #3
 
-; Function Attrs: noinline nounwind optnone ssp uwtable(sync)
-define i32 @t() #0 {
-  %1 = alloca i32, align 4
-  store i32 11, ptr %1, align 4
-  ret i32 32
-}
-
-; Function Attrs: noinline nounwind optnone ssp uwtable(sync)
-define i32 @r_runtime_scanf(ptr noundef %0, ...) #0 {
-  %2 = alloca ptr, align 8
-  %3 = alloca ptr, align 8
-  %4 = alloca i32, align 4
-  store ptr %0, ptr %2, align 8
-  call void @llvm.va_start(ptr %3)
-  %5 = load ptr, ptr %2, align 8
-  %6 = load ptr, ptr %3, align 8
-  %7 = call i32 @vscanf(ptr noundef %5, ptr noundef %6)
-  store i32 %7, ptr %4, align 4
-  call void @llvm.va_end(ptr %3)
-  %8 = load i32, ptr %4, align 4
-  ret i32 %8
-}
-
-declare i32 @vscanf(ptr noundef, ptr noundef) #2
-
 attributes #0 = { noinline nounwind optnone ssp uwtable(sync) "frame-pointer"="non-leaf" "min-legal-vector-width"="0" "no-trapping-math"="true" "probe-stack"="__chkstk_darwin" "stack-protector-buffer-size"="8" "target-cpu"="apple-m1" "target-features"="+aes,+crc,+crypto,+dotprod,+fp-armv8,+fp16fml,+fullfp16,+lse,+neon,+ras,+rcpc,+rdm,+sha2,+sha3,+sm4,+v8.1a,+v8.2a,+v8.3a,+v8.4a,+v8.5a,+v8a,+zcm,+zcz" }
-attributes #1 = { nocallback nofree nosync nounwind willreturn }
-attributes #2 = { "frame-pointer"="non-leaf" "no-trapping-math"="true" "probe-stack"="__chkstk_darwin" "stack-protector-buffer-size"="8" "target-cpu"="apple-m1" "target-features"="+aes,+crc,+crypto,+dotprod,+fp-armv8,+fp16fml,+fullfp16,+lse,+neon,+ras,+rcpc,+rdm,+sha2,+sha3,+sm4,+v8.1a,+v8.2a,+v8.3a,+v8.4a,+v8.5a,+v8a,+zcm,+zcz" }
+attributes #1 = { "frame-pointer"="non-leaf" "no-trapping-math"="true" "probe-stack"="__chkstk_darwin" "stack-protector-buffer-size"="8" "target-cpu"="apple-m1" "target-features"="+aes,+crc,+crypto,+dotprod,+fp-armv8,+fp16fml,+fullfp16,+lse,+neon,+ras,+rcpc,+rdm,+sha2,+sha3,+sm4,+v8.1a,+v8.2a,+v8.3a,+v8.4a,+v8.5a,+v8a,+zcm,+zcz" }
+attributes #2 = { nocallback nofree nosync nounwind willreturn }
 attributes #3 = { noreturn "frame-pointer"="non-leaf" "no-trapping-math"="true" "probe-stack"="__chkstk_darwin" "stack-protector-buffer-size"="8" "target-cpu"="apple-m1" "target-features"="+aes,+crc,+crypto,+dotprod,+fp-armv8,+fp16fml,+fullfp16,+lse,+neon,+ras,+rcpc,+rdm,+sha2,+sha3,+sm4,+v8.1a,+v8.2a,+v8.3a,+v8.4a,+v8.5a,+v8a,+zcm,+zcz" }
 attributes #4 = { noreturn }
 

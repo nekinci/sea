@@ -1,49 +1,53 @@
-
 extern fun int sum(int a, int b)
 
 # main function
 fun int main() {
 
-    var bool cond = false
-    var string s = "hello"
-    for cond {
+    var bool cond = true
+    var string s = "strlen = %d\n"
+    printf_internal(s, strlen_internal(s))
+    printf_internal("===== Welcome to the calculator =====\n")
+    printf_internal("What do you want to do?\nPlease enter the your choice: \n")
+    for cond && false {
             var int a = 1
             var int b = 2
             var int choice = -1
 
-            r_runtime_printf("===== Welcome to the calculator =====\n")
-            r_runtime_printf("What do you want to do?\nPlease enter the your choice: \n")
-            r_runtime_printf("Press '1' for sum operation\n")
-            r_runtime_printf("Press '2' for subtract operation\n")
-            r_runtime_printf("Press '3' for multiply operation\n")
-            r_runtime_printf("Press '4' for division operation\n")
-            r_runtime_printf("Press -1 for exit operation\n")
-            r_runtime_scanf("%d", choice)
+
+            printf_internal("Press '1' for sum operation\n")
+            printf_internal("Press '2' for subtract operation\n")
+            printf_internal("Press '3' for multiply operation\n")
+            printf_internal("Press '4' for division operation\n")
+            printf_internal("Press -1 for exit operation\n")
+            scanf_internal("%d", &choice)
+            printf_internal("Seçim %d\n", choice)
 
             if choice == -1 {
-                r_runtime_printf("Good bye!\n")
+                printf_internal("Good bye!\n")
                 r_runtime_exit(3)
             }
 
             if choice <= 0 || choice > 4 {
-                r_runtime_printf("Invalid choice.\n")
+                printf_internal("Invalid choice.\n")
             } else {
-                r_runtime_printf("First number: ")
-                r_runtime_scanf("%d", a)
-                r_runtime_printf("Second number: ")
-                r_runtime_scanf("%d", b)
+                printf_internal("First number: ")
+                scanf_internal("%d", &a)
+                printf_internal("Second number: ")
+                scanf_internal("%d", &b)
 
-
+                 printf_internal("================\n")
                  if choice == 1 {
-                    r_runtime_printf("Sum result: %d\n", sum(a, b))
+                    printf_internal("Sum result: %d\n", sum(a, b))
                  } else if choice == 2 {
-                    r_runtime_printf("Sub result: %d\n", a - b)
+                    printf_internal("Sub result: %d\n", a - b)
                  } else if choice == 3 {
-                    r_runtime_printf("Multiply result: %d\n", a * b)
+                    printf_internal("Multiply result: %d\n", a * b)
                  } else if choice == 4 {
-                    r_runtime_printf("Division result: %d\n", a / b)
+                    printf_internal("Division result: %d\n", a / b)
 
                  }
+                 printf_internal("================\n")
+
             }
     }
 

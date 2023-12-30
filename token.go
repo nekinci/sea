@@ -52,4 +52,5 @@ const (
 	TokPublic        Token = "public"
 	TokPrivate       Token = "private"
 	TokStruct        Token = "struct"
+	TokImpl          Token = "impl"
 )
