@@ -54,6 +54,10 @@ int scanf_internal(string s, ...) {
 }
 
 
+void* malloc_internal(size_t s) {
+    return malloc(s);
+}
+
 size_t strlen_internal(string str) {
     return str.size;
 }

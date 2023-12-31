@@ -35,6 +35,7 @@ type Compiler struct {
 	currentFunc *ir.Func
 	funcs       map[string]*ir.Func
 	types       map[string]types.Type
+	globals     map[string]value.Value
 	pkg         *Package
 }
 
@@ -61,7 +62,6 @@ func (c *Compiler) initBuiltinTypes() {
 	stringStruct := types.NewStruct(types.NewPointer(types.I8), types.I64)
 	def := c.module.NewTypeDef("string", stringStruct)
 	c.types["string"] = def
-
 }
 
 func (c *Compiler) initBuiltinFuncs() {
@@ -104,6 +104,11 @@ func (c *Compiler) initBuiltinFuncs() {
 	strlenInternal := module.NewFunc("strlen_internal", types.I64, ir.NewParam("", c.types["string"]))
 	strlenInternal.Linkage = enum.LinkageExternal
 	c.funcs["strlen_internal"] = strlenInternal
+
+	mallocInternal := module.NewFunc("malloc_internal", types.NewPointer(types.I8), ir.NewParam("size", types.I64))
+	mallocInternal.Linkage = enum.LinkageExternal
+	c.funcs["malloc_internal"] = mallocInternal
+
 }
 
 func (c *Compiler) resolveType(expr Expr) types.Type {
@@ -125,17 +130,33 @@ func (c *Compiler) defineType(expr Expr) types.Type {
 	panic("TODO")
 }
 
+func num() int {
+	return 5
+}
 func (c *Compiler) compileVarDef(stmt *VarDefStmt) {
 	assert(c.variables != nil, "un-initialized variable map")
 	assert(c.currentBlock != nil, "currentBlock cannot be nil")
 	block := c.currentBlock
 
 	typ := c.resolveType(stmt.Type)
+	if stmt.IsPtr {
+		typ = types.NewPointer(typ)
+	}
 	ptr := block.NewAlloca(typ)
 	c.variables[stmt.Name.Name] = ptr
 
 	if stmt.Init != nil {
-		block.NewStore(c.compileExpr(stmt.Init), ptr)
+		if _, ok := stmt.Init.(*NilExpr); ok {
+			block.NewStore(constant.NewNull(typ.(*types.PointerType)), ptr)
+		} else {
+			if stmt.IsPtr {
+				e := c.compileExpr(stmt.Init)
+				cast := c.currentBlock.NewBitCast(e, typ)
+				block.NewStore(cast, ptr)
+			} else {
+				block.NewStore(c.compileExpr(stmt.Init), ptr)
+			}
+		}
 	}
 }
 
@@ -251,11 +272,11 @@ func (c *Compiler) compileIfStmt(stmt *IfStmt) {
 */
 
 func (c *Compiler) compileForStmt(stmt *ForStmt) {
-	funcBlock := c.currentFunc.NewBlock("funcBlock")
-	initBlock := c.currentFunc.NewBlock("initBlock")
-	forBlock := c.currentFunc.NewBlock("forBlock")
-	condBlock := c.currentFunc.NewBlock("condBlock")
-	stepBlock := c.currentFunc.NewBlock("StepBlock")
+	funcBlock := c.currentFunc.NewBlock("")
+	initBlock := c.currentFunc.NewBlock("")
+	forBlock := c.currentFunc.NewBlock("")
+	condBlock := c.currentFunc.NewBlock("")
+	stepBlock := c.currentFunc.NewBlock("")
 
 	c.continueBlock = condBlock
 	c.breakBlock = funcBlock
@@ -317,12 +338,28 @@ func (c *Compiler) call(expr *CallExpr) value.Value {
 	return b.NewCall(fun, args...)
 }
 
+// sizeOfCompilationTime returns the size of
+func sizeof(p types.Type) (int64 uint64) {
+	switch p := p.(type) {
+	case *types.IntType:
+		return p.BitSize / 8
+	default:
+		panic("TODO unreachable sizeof")
+	}
+}
+
 func (c *Compiler) compileExpr(expr Expr) value.Value {
 	switch expr := expr.(type) {
 	case *BinaryExpr:
 		left := c.compileExpr(expr.Left)
 		right := c.compileExpr(expr.Right)
-		return generateOperation(c.currentBlock, left, right, expr.Op)
+		var v value.Value = left
+		switch expr.Left.(type) {
+		case *UnaryExpr:
+			v = c.currentBlock.NewLoad(types.I32, v)
+		}
+
+		return generateOperation(c.currentBlock, v, right, expr.Op)
 	case *NumberExpr:
 		return getI32Constant(expr.Value)
 	case *StringExpr:
@@ -340,34 +377,43 @@ func (c *Compiler) compileExpr(expr Expr) value.Value {
 		return c.call(expr)
 	case *IdentExpr:
 		v := c.getAlloca(expr.Name)
-		switch v := v.(type) {
-		case *ir.Param:
-			return v
-		case *ir.InstAlloca:
-			return c.currentBlock.NewLoad(v.ElemType, v)
-		default:
-			panic("TODO:")
-		}
-
+		return c.currentBlock.NewLoad(v.(*ir.InstAlloca).ElemType, v)
 	case *ParenExpr:
 		return c.compileExpr(expr.Expr)
 	case *BoolExpr:
 		return constant.NewBool(expr.Value)
 	case *UnaryExpr:
-		right := c.compileExpr(expr.Right)
 		switch expr.Op {
 		case Sub:
+			right := c.compileExpr(expr.Right)
 			return c.currentBlock.NewMul(constant.NewInt(types.I32, -1), right)
 		case Band:
 			val := c.compileExpr(expr.Right)
 			return val.(*ir.InstLoad).Src
+		case Sizeof:
+			// TODO constant expressions must, we handle as statically to save day for now
+			resolvedType := c.resolveType(expr.Right)
+			var size = sizeof(resolvedType)
+			return constant.NewInt(types.I64, int64(size))
+		case Mul:
+			addr := c.compileExpr(expr.Right)
+			load, ok := addr.(*ir.InstLoad)
+			assert(ok, "*(ptr) operand inst load problem")
+			typ, ok := load.ElemType.(*types.PointerType)
+			assert(ok, "* operator must have combined with pointer")
+			elemType := typ.ElemType
+			return c.currentBlock.NewLoad(elemType, addr)
 		default:
 			panic("Unreachable unary expression op = " + expr.Op.String())
 		}
 	case *AssignExpr:
-		right := c.compileExpr(expr.Expr)
-		c.currentBlock.NewStore(right, c.getAlloca(expr.Name.Name))
-		return c.compileExpr(expr.Name)
+		left := c.compileExpr(expr.Left)
+		right := c.compileExpr(expr.Right)
+		load, ok := left.(*ir.InstLoad)
+		assert(ok, "assign_expr left operand is not loaded")
+		assert(load.Src != nil, "assign_expr load.Src is nil")
+		c.currentBlock.NewStore(right, load.Src)
+		return left
 	default:
 		panic("unreachable")
 	}
@@ -391,6 +437,7 @@ const (
 	And
 	Band
 	Or
+	Sizeof
 )
 
 func (o Operation) String() string {
@@ -419,6 +466,10 @@ func (o Operation) String() string {
 		return ">="
 	case Not:
 		return "!"
+	case Band:
+		return "&"
+	case Sizeof:
+		return "sizeof"
 	default:
 		panic("unreachable")
 	}
@@ -515,8 +566,8 @@ type UnaryExpr struct {
 }
 
 type AssignExpr struct {
-	Name *IdentExpr
-	Expr Expr
+	Left  Expr
+	Right Expr
 }
 
 func (a *AssignExpr) IsExpr() {}
@@ -549,6 +600,18 @@ func isDigit(c uint8) bool {
 type IdentExpr struct {
 	Name string
 }
+
+type SelectorExpr struct {
+	Left  Expr
+	Right Expr
+}
+
+func (e *SelectorExpr) IsExpr() {}
+
+type NilExpr struct{}
+
+func (e *NilExpr) IsNil()  {}
+func (e *NilExpr) IsExpr() {}
 
 func (e *IdentExpr) IsExpr() {}
 
@@ -751,14 +814,13 @@ func (t Token) String() string {
 }
 
 type Lexer struct {
-	filename string
-	input    string
-	pos      int
-	start    int
-	inputLen int
-	curTok   Token
-	curVal   string
-	comments bool
+	filename                           string
+	input                              string
+	inputLen                           int
+	curTok                             Token
+	curVal                             string
+	comments                           bool
+	start, offset, line, pos, lastLine int
 }
 
 func (l *Lexer) operatorToken() Token {
@@ -826,28 +888,24 @@ func (l *Lexer) nextAndBackup() (Token, string) {
 
 func (l *Lexer) skipWhitespace() {
 	for isWhitespace(l.input[l.pos]) {
+		if l.input[l.pos] == '\n' {
+			l.line++
+			l.offset = -1 // To adjust to the 0 position after the if statement
+		}
 		l.pos = l.pos + 1
+		l.offset++
 	}
 }
 
 func (l *Lexer) skipLineComment() Token {
 	for l.input[l.pos] != '\n' {
 		l.pos = l.pos + 1
+		l.offset = l.offset + 1
 	}
+	l.line = l.line + 1
 	l.pos = l.pos + 1
+	l.offset = 0
 	return TokSingleComment
-}
-
-func (l *Lexer) skipBlockComment() Token {
-	for l.input[l.pos] != '*' {
-		l.pos = l.pos + 1
-	}
-	l.pos = l.pos + 1
-	for l.input[l.pos] != '/' {
-		l.pos = l.pos + 1
-	}
-	l.pos = l.pos + 1
-	return TokMultiComment
 }
 
 func (l *Lexer) tok() Token {
@@ -874,10 +932,17 @@ func (l *Lexer) tok() Token {
 	case c == '+' || c == '-' || c == '*' || c == '/' || c == '%':
 		if c == '/' && l.inputLen > l.pos+1 && l.input[l.pos+1] == '*' {
 			l.pos += 2
+			l.offset += 2
 			for l.pos+1 < l.inputLen && !(l.input[l.pos] == '*' && l.input[l.pos+1] == '/') {
+				if l.input[l.pos] == '\n' {
+					l.offset = -1
+					l.line++
+				}
 				l.pos++
+				l.offset++
 			}
 			l.pos += 2
+			l.offset += 2
 			return l.tok()
 		}
 		return l.operatorToken()
@@ -933,6 +998,10 @@ func (l *Lexer) tok() Token {
 			return TokStruct
 		case "impl":
 			return TokImpl
+		case "nil":
+			return TokNil
+		case "sizeof":
+			return TokSizeof
 		}
 
 		return TokIdentifier
@@ -1017,6 +1086,7 @@ func (l *Lexer) tok() Token {
 
 func (l *Lexer) next() (Token, string) {
 
+	l.lastLine = l.line
 	tok := l.tok()
 	l.curTok = tok
 	l.curVal = l.value()
@@ -1074,13 +1144,14 @@ func (p *Parser) parse() *Package {
 func (p *Parser) parseVar() *VarDefStmt {
 	p.expect(TokVar)
 	_, typ := p.expect(TokIdentifier)
-	_, name := p.expect(TokIdentifier)
 
 	isPtr := false
 	if p.curTok == TokMultiply {
 		p.expect(TokMultiply)
 		isPtr = true
 	}
+
+	_, name := p.expect(TokIdentifier)
 
 	varDefStmt := &VarDefStmt{
 		Name:  &IdentExpr{Name: name},
@@ -1252,6 +1323,11 @@ func (p *Parser) binaryPrecedence(tok Token) int {
 	// 5. or, bor, xor
 	// And also unary operators are more precise
 
+	// TODO paren case is important, in paren case that is should be skipped
+	if p.line > p.lastLine /* && p.isInsideParen() */ {
+		return 0
+	}
+
 	switch tok {
 	case TokMultiply, TokDivision, TokLShift, TokRShift, TokMod:
 		return 5
@@ -1270,8 +1346,6 @@ func (p *Parser) binaryPrecedence(tok Token) int {
 
 func (p *Parser) unaryPrecedence(tok Token) int {
 	switch tok {
-	case TokMultiply, TokBAnd:
-		return 7
 	case TokMinus, TokPlus, TokNot:
 		return 6
 	default:
@@ -1290,11 +1364,11 @@ func (p *Parser) parseBinaryExpr(parentPrecedence int) Expr {
 	// BinaryExpr[BinaryExpr[5*4] * 3]
 
 	// -5+3
-
 	var left Expr
+
 	unaryPrecedence := p.unaryPrecedence(p.curTok)
 	if unaryPrecedence != 0 && unaryPrecedence >= parentPrecedence {
-		tok, _ := p.expectAnyOf(TokMinus, TokNot, TokPlus, TokBAnd)
+		tok, _ := p.expectAnyOf(TokMinus, TokNot, TokPlus)
 		left = &UnaryExpr{
 			Op:    p.op(tok),
 			Right: p.parseBinaryExpr(unaryPrecedence),
@@ -1353,8 +1427,28 @@ func (p *Parser) op(tok Token) Operation {
 	}
 }
 
+func (p *Parser) parseSelector() Expr {
+	_, name := p.expect(TokIdentifier)
+	var expr Expr
+	expr = &IdentExpr{Name: name}
+	// a.b.c
+	//     ^
+	// {Left: a, Right: {Left: b, Right: c}}
+	// TODO think parens or something like
+	for p.curTok == TokDot {
+		p.expect(TokDot)
+		r := p.parseSelector()
+		expr = &SelectorExpr{Left: expr, Right: r}
+	}
+
+	return expr
+}
+
 func (p *Parser) parseSimpleExpr() Expr {
 	switch p.curTok {
+	case TokNil:
+		p.expect(TokNil)
+		return &NilExpr{}
 	case TokString:
 		_, str := p.expect(TokString)
 		unquotedStr, err := strconv.Unquote(str)
@@ -1362,7 +1456,13 @@ func (p *Parser) parseSimpleExpr() Expr {
 		// implicitly add end of string to unquoted string
 		unquotedStr += "\x00"
 		return &StringExpr{Value: str, Unquoted: unquotedStr}
-		return &StringExpr{Value: str, Unquoted: unquotedStr}
+	case TokSizeof:
+		p.expect(TokSizeof)
+		p.expect(TokLParen)
+		_, typ := p.expect(TokIdentifier)
+		p.expect(TokLParen)
+		// TODO Is UnaryExpr or special handling
+		return &UnaryExpr{Op: Sizeof, Right: &IdentExpr{Name: typ}}
 	case TokNumber:
 		_, val := p.expect(TokNumber)
 		v, err := strconv.ParseInt(val, 10, 64)
@@ -1371,7 +1471,6 @@ func (p *Parser) parseSimpleExpr() Expr {
 	case TokTrue, TokFalse:
 		tok, _ := p.expectAnyOf(TokTrue, TokFalse)
 		return &BoolExpr{Value: tok == TokTrue}
-
 	case TokLParen:
 		p.expect(TokLParen)
 		expr := p.parseExpr()
@@ -1379,6 +1478,21 @@ func (p *Parser) parseSimpleExpr() Expr {
 		return &ParenExpr{Expr: expr}
 	case TokIdentifier:
 		return p.parseIdentExpr()
+	case TokMultiply:
+		p.expect(TokMultiply)
+		expr := p.parseSelector()
+		expr = &UnaryExpr{Op: Mul, Right: expr}
+		var right Expr
+		if p.curTok == TokAssign {
+			p.expect(TokAssign)
+			right = p.parseExpr()
+			return &AssignExpr{Left: expr, Right: right}
+		}
+		return expr
+	case TokBAnd:
+		p.expect(TokBAnd)
+		expr := p.parseExpr()
+		return &UnaryExpr{Op: Band, Right: expr}
 	default:
 		panic("unreachable tok -> " + string(p.curTok))
 
