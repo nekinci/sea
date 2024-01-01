@@ -1,5 +1,9 @@
 extern fun int sum(int a, int b)
 
+struct A {
+    int a
+}
+
 # main function
 fun int main() {
 
@@ -8,5 +12,4 @@ fun int main() {
     *b = 1
     printf_internal("sum of a and b %d", sum(a, *b))
     return 0
-
 }

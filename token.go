@@ -2,6 +2,10 @@ package main
 
 type Token string
 
+func (t Token) String() string {
+	return string(t)
+}
+
 const (
 	EOF              Token = "<eof>"
 	TokPlus          Token = "+"
