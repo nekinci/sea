@@ -190,7 +190,11 @@ func (c *Compiler) compileStructDef(def *StructDefStmt) {
 func (c *Compiler) compileStmt(stmt Stmt) {
 	switch innerStmt := stmt.(type) {
 	case *ReturnStmt:
-		c.currentBlock.NewRet(c.compileExpr(innerStmt.Value))
+		if innerStmt.Value == nil {
+			c.currentBlock.NewRet(nil)
+		} else {
+			c.currentBlock.NewRet(c.compileExpr(innerStmt.Value))
+		}
 	case *BreakStmt:
 		c.currentBlock.NewBr(c.breakBlock)
 	case *ContinueStmt:

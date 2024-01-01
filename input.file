@@ -10,6 +10,5 @@ fun int main() {
     var int a = 444
     var int *b = malloc_internal(sizeof(int))
     *b = 1
-    printf_internal("sum of a and b %d", sum(a, *b))
-    return 0
+    return 3
 }

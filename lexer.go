@@ -6,13 +6,41 @@ import (
 )
 
 type Lexer struct {
-	filename                           string
-	input                              string
-	inputLen                           int
-	curTok                             Token
-	curVal                             string
-	comments                           bool
-	start, offset, line, pos, lastLine int
+	filename                      string
+	input                         string
+	inputLen                      int
+	curTok                        Token
+	curVal                        string
+	comments                      bool
+	col, line, pos                int
+	startCol, startLine, startPos int
+	lastLine                      int
+}
+
+// Start returns current token's start position
+func (l *Lexer) Start() Pos {
+	return Pos{
+		Col:    l.startCol,
+		Line:   l.startLine,
+		Offset: l.startPos,
+	}
+}
+
+// End returns current token's end position
+func (l *Lexer) End() Pos {
+	return Pos{
+		Col:    l.col,
+		Line:   l.line,
+		Offset: l.pos,
+	}
+}
+
+func (l *Lexer) isNewLine() bool {
+	if l.input[l.pos] == '\n' {
+		return true
+	}
+
+	return false
 }
 
 func (l *Lexer) operatorToken() Token {
@@ -69,7 +97,7 @@ func (l *Lexer) printTokens() {
 
 func (l *Lexer) backup(len int) {
 	l.pos = l.pos - len
-	l.offset = l.offset - len
+	l.col = l.col - len
 	// TODO line decreasing
 	Assert(l.pos >= 0 && l.pos < l.inputLen, "lexer position out of bounds")
 }
@@ -82,23 +110,23 @@ func (l *Lexer) nextAndBackup() (Token, string) {
 
 func (l *Lexer) skipWhitespace() {
 	for isWhitespace(l.input[l.pos]) {
-		if l.input[l.pos] == '\n' {
+		if l.isNewLine() {
 			l.line++
-			l.offset = -1 // To adjust to the 0 position after the if statement
+			l.col = -1 // To adjust to the 0 position after the if statement
 		}
 		l.pos = l.pos + 1
-		l.offset++
+		l.col++
 	}
 }
 
 func (l *Lexer) skipLineComment() Token {
-	for l.input[l.pos] != '\n' {
+	for !l.isNewLine() {
 		l.pos = l.pos + 1
-		l.offset = l.offset + 1
+		l.col = l.col + 1
 	}
 	l.line = l.line + 1
 	l.pos = l.pos + 1
-	l.offset = 0
+	l.col = 0
 	return TokSingleComment
 }
 
@@ -107,7 +135,9 @@ func (l *Lexer) tok() Token {
 		return EOF
 	}
 
-	l.start = l.pos
+	l.startPos = l.pos
+	l.startLine = l.line
+	l.startCol = l.col
 	c := l.input[l.pos]
 	switch {
 	case c == '#':
@@ -126,17 +156,17 @@ func (l *Lexer) tok() Token {
 	case c == '+' || c == '-' || c == '*' || c == '/' || c == '%':
 		if c == '/' && l.inputLen > l.pos+1 && l.input[l.pos+1] == '*' {
 			l.pos += 2
-			l.offset += 2
+			l.col += 2
 			for l.pos+1 < l.inputLen && !(l.input[l.pos] == '*' && l.input[l.pos+1] == '/') {
 				if l.input[l.pos] == '\n' {
-					l.offset = -1
+					l.col = -1
 					l.line++
 				}
 				l.pos++
-				l.offset++
+				l.col++
 			}
 			l.pos += 2
-			l.offset += 2
+			l.col += 2
 			return l.tok()
 		}
 		return l.operatorToken()
@@ -290,5 +320,5 @@ func (l *Lexer) next() (Token, string) {
 }
 
 func (l *Lexer) value() string {
-	return l.input[l.start:l.pos]
+	return l.input[l.startPos:l.pos]
 }

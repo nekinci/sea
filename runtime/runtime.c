@@ -4,6 +4,8 @@
 #include<stdlib.h>
 #include <string.h>
 
+#pragma clang diagnostic ignored "-Wvarargs"
+
 
 typedef struct {
     const char* buffer;

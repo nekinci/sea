@@ -9,8 +9,17 @@ import (
 
 type Parser struct {
 	*Lexer
-	module *Package
-	errors []string
+	module     *Package
+	errors     []string
+	start, end Pos // indicates the start and end positions of the last expected token
+}
+
+func (p *Parser) startOfLastExpected() Pos {
+	return p.start
+}
+
+func (p *Parser) endOfLastExpected() Pos {
+	return p.end
 }
 
 func NewParser(path string) *Parser {
@@ -25,7 +34,6 @@ func NewParser(path string) *Parser {
 		filename: path,
 		input:    string(file),
 		pos:      0,
-		start:    0,
 		inputLen: len(file),
 	}
 
@@ -51,6 +59,7 @@ func (p *Parser) parse() *Package {
 
 func (p *Parser) parseVar() *VarDefStmt {
 	p.expect(TokVar)
+	var start = p.startOfLastExpected()
 	_, typ := p.expect(TokIdentifier)
 
 	isPtr := false
@@ -66,6 +75,7 @@ func (p *Parser) parseVar() *VarDefStmt {
 		Type:  &IdentExpr{Name: typ},
 		Init:  nil,
 		IsPtr: isPtr,
+		start: start,
 	}
 
 	if p.curTok == TokAssign {
@@ -77,7 +87,7 @@ func (p *Parser) parseVar() *VarDefStmt {
 
 func (p *Parser) parseIf() *IfStmt {
 	p.expect(TokIf)
-	ifStmt := &IfStmt{}
+	ifStmt := &IfStmt{start: p.startOfLastExpected()}
 	ifStmt.Cond = p.parseExpr()
 	ifStmt.Then = p.parseStmt()
 	if p.curTok == TokElse {
@@ -98,6 +108,7 @@ func (p *Parser) parseField() *Field {
 
 func (p *Parser) parseStruct() *StructDefStmt {
 	p.expect(TokStruct)
+	var start = p.startOfLastExpected()
 	_, name := p.expect(TokIdentifier)
 	p.expect(TokLBrace)
 	fields := make([]*Field, 0)
@@ -111,12 +122,14 @@ func (p *Parser) parseStruct() *StructDefStmt {
 	return &StructDefStmt{
 		Name:   &IdentExpr{Name: name},
 		Fields: fields,
+		start:  start,
+		end:    p.endOfLastExpected(),
 	}
 }
 
 func (p *Parser) parseFor() *ForStmt {
 	p.expect(TokFor)
-	forStmt := &ForStmt{}
+	forStmt := &ForStmt{start: p.startOfLastExpected()}
 
 	// TODO add support multiple variable stmts
 	if p.curTok == TokVar {
@@ -153,14 +166,18 @@ func (p *Parser) parseStmt() Stmt {
 	case TokBreak:
 		p.expect(TokBreak)
 		// TODO handle labels
-		return &BreakStmt{}
+		return &BreakStmt{p.startOfLastExpected(), p.endOfLastExpected()}
 	case TokContinue:
 		p.expect(TokContinue)
-		return &ContinueStmt{}
+		return &ContinueStmt{p.startOfLastExpected(), p.endOfLastExpected()}
 	case TokReturn:
 		p.expect(TokReturn)
-		returnStmt := &ReturnStmt{}
-		returnStmt.Value = p.parseExpr()
+		returnStmt := &ReturnStmt{start: p.startOfLastExpected()}
+		if p.Start().Line == returnStmt.start.Line {
+			returnStmt.Value = p.parseExpr()
+		} else {
+			returnStmt.end = p.endOfLastExpected()
+		}
 		return returnStmt
 	case TokVar:
 		return p.parseVar()
@@ -184,16 +201,16 @@ func (p *Parser) parseImpl() *ImplStmt {
 
 func (p *Parser) parseBlock() *BlockStmt {
 	p.expect(TokLBrace)
-	blockStmt := &BlockStmt{Stmts: make([]Stmt, 0)}
+	blockStmt := &BlockStmt{Stmts: make([]Stmt, 0), start: p.startOfLastExpected()}
 	for {
 		stmt := p.parseStmt()
 		blockStmt.Stmts = append(blockStmt.Stmts, stmt)
 		if p.curTok == TokRBrace {
 			p.expect(TokRBrace)
+			blockStmt.end = p.endOfLastExpected()
 			break
 		}
 	}
-
 	return blockStmt
 }
 
@@ -270,9 +287,11 @@ func (p *Parser) parseBinaryExpr(parentPrecedence int) Expr {
 	unaryPrecedence := p.unaryPrecedence(p.curTok)
 	if unaryPrecedence != 0 && unaryPrecedence >= parentPrecedence {
 		tok, _ := p.expectAnyOf(TokMinus, TokNot, TokPlus)
+		var start = p.startOfLastExpected()
 		left = &UnaryExpr{
 			Op:    p.op(tok),
 			Right: p.parseBinaryExpr(unaryPrecedence),
+			start: start,
 		}
 	} else {
 		left = p.parseSimpleExpr()
@@ -349,40 +368,44 @@ func (p *Parser) parseSimpleExpr() Expr {
 	switch p.curTok {
 	case TokNil:
 		p.expect(TokNil)
-		return &NilExpr{}
+		return &NilExpr{p.startOfLastExpected(), p.endOfLastExpected()}
 	case TokString:
 		_, str := p.expect(TokString)
 		unquotedStr, err := strconv.Unquote(str)
 		Assert(err == nil, "unquoted string expected")
 		// implicitly add end of string to unquoted string
 		unquotedStr += "\x00"
-		return &StringExpr{Value: str, Unquoted: unquotedStr}
+		return &StringExpr{Value: str, Unquoted: unquotedStr, start: p.startOfLastExpected(), end: p.endOfLastExpected()}
 	case TokSizeof:
 		p.expect(TokSizeof)
+		var start = p.startOfLastExpected()
 		p.expect(TokLParen)
 		_, typ := p.expect(TokIdentifier)
-		p.expect(TokLParen)
+		identStart, identEnd := p.startOfLastExpected(), p.endOfLastExpected()
+		p.expect(TokRParen)
 		// TODO Is UnaryExpr or special handling
-		return &UnaryExpr{Op: Sizeof, Right: &IdentExpr{Name: typ}}
+		return &UnaryExpr{Op: Sizeof, Right: &IdentExpr{Name: typ, start: identStart, end: identEnd}, start: start}
 	case TokNumber:
 		_, val := p.expect(TokNumber)
 		v, err := strconv.ParseInt(val, 10, 64)
 		Assert(err == nil, fmt.Sprintf("Invalid number: %v", err))
-		return &NumberExpr{Value: v}
+		return &NumberExpr{Value: v, start: p.startOfLastExpected(), end: p.endOfLastExpected()}
 	case TokTrue, TokFalse:
 		tok, _ := p.expectAnyOf(TokTrue, TokFalse)
-		return &BoolExpr{Value: tok == TokTrue}
+		return &BoolExpr{Value: tok == TokTrue, start: p.startOfLastExpected(), end: p.endOfLastExpected()}
 	case TokLParen:
 		p.expect(TokLParen)
+		start := p.startOfLastExpected()
 		expr := p.parseExpr()
 		p.expect(TokRParen)
-		return &ParenExpr{Expr: expr}
+		return &ParenExpr{Expr: expr, start: start, end: p.endOfLastExpected()}
 	case TokIdentifier:
 		return p.parseIdentExpr()
 	case TokMultiply:
 		p.expect(TokMultiply)
+		var start = p.startOfLastExpected()
 		expr := p.parseSelector()
-		expr = &UnaryExpr{Op: Mul, Right: expr}
+		expr = &UnaryExpr{Op: Mul, Right: expr, start: start}
 		var right Expr
 		if p.curTok == TokAssign {
 			p.expect(TokAssign)
@@ -392,8 +415,9 @@ func (p *Parser) parseSimpleExpr() Expr {
 		return expr
 	case TokBAnd:
 		p.expect(TokBAnd)
+		var start = p.startOfLastExpected()
 		expr := p.parseExpr()
-		return &UnaryExpr{Op: Band, Right: expr}
+		return &UnaryExpr{Op: Band, Right: expr, start: start}
 	default:
 		panic("unreachable tok -> " + string(p.curTok))
 
@@ -402,23 +426,25 @@ func (p *Parser) parseSimpleExpr() Expr {
 
 func (p *Parser) parseIdentExpr() Expr {
 	_, identifier := p.expect(TokIdentifier)
+	identExpr := &IdentExpr{Name: identifier, start: p.startOfLastExpected(), end: p.endOfLastExpected()}
 	if p.curTok == TokLParen {
 		callExpr := &CallExpr{}
-		callExpr.Name = &IdentExpr{Name: identifier}
+		callExpr.Name = identExpr
 		p.expect(TokLParen)
 		callExpr.Args = p.parseExprList()
 		p.expect(TokRParen)
+		callExpr.end = p.endOfLastExpected()
 
 		return callExpr
 	}
 
 	if p.curTok == TokAssign {
 		p.expect(TokAssign)
-		assignExpr := &AssignExpr{&IdentExpr{Name: identifier}, p.parseExpr()}
+		assignExpr := &AssignExpr{identExpr, p.parseExpr()}
 		return assignExpr
 	}
 
-	return &IdentExpr{Name: identifier}
+	return identExpr
 }
 
 func (p *Parser) parseExpr() Expr {
@@ -463,8 +489,12 @@ func (p *Parser) assume(cond bool, msg string) {
 	}
 }
 
+// expect checks the given token either matches the current token and then advances to the next token
+// note that, Start() and End() methods should be called before the expect() method to ensure that get correct position
 func (p *Parser) expect(tok Token) (Token, string) {
 	defer p.next()
+	p.start = p.Start()
+	p.end = p.End()
 	if p.curTok == tok {
 		return p.curTok, p.curVal
 	}
@@ -493,7 +523,7 @@ func (p *Parser) mayNextBe(tok Token) bool {
 }
 
 func (p *Parser) parseFunc() *FuncDefStmt {
-
+	var start = p.Start()
 	var isExternal bool
 	if p.curTok == TokExtern {
 		isExternal = true
@@ -505,6 +535,7 @@ func (p *Parser) parseFunc() *FuncDefStmt {
 	funcDef := &FuncDefStmt{
 		Params:     make([]*ParamExpr, 0),
 		IsExternal: isExternal,
+		start:      start,
 	}
 	_, identifier := p.expect(TokIdentifier)
 	funcDef.Type = &IdentExpr{Name: identifier}
@@ -513,6 +544,9 @@ func (p *Parser) parseFunc() *FuncDefStmt {
 	funcDef.Params = p.parseParams()
 	if !isExternal {
 		funcDef.Body = p.parseBlock()
+	} else {
+		var end = p.End()
+		funcDef.end = &end
 	}
 	return funcDef
 }
