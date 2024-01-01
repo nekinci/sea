@@ -106,9 +106,12 @@ func (c *Compiler) resolveType(expr Expr) types.Type {
 		}
 
 		panic(fmt.Sprintf("no provided type %s", expr.Name))
+	case *RefExpr:
+		typ := c.resolveType(expr.Expr)
+		return types.NewPointer(typ)
 	}
 
-	panic("TODO")
+	panic("unreachable")
 }
 
 func (c *Compiler) defineType(expr Expr) types.Type {
@@ -123,9 +126,7 @@ func (c *Compiler) compileVarDef(stmt *VarDefStmt) {
 	block := c.currentBlock
 
 	typ := c.resolveType(stmt.Type)
-	if stmt.IsPtr {
-		typ = types.NewPointer(typ)
-	}
+
 	ptr := block.NewAlloca(typ)
 	c.variables[stmt.Name.Name] = ptr
 
@@ -133,7 +134,7 @@ func (c *Compiler) compileVarDef(stmt *VarDefStmt) {
 		if _, ok := stmt.Init.(*NilExpr); ok {
 			block.NewStore(constant.NewNull(typ.(*types.PointerType)), ptr)
 		} else {
-			if stmt.IsPtr {
+			if _, ok := stmt.Type.(*RefExpr); ok {
 				e := c.compileExpr(stmt.Init)
 				cast := c.currentBlock.NewBitCast(e, typ)
 				block.NewStore(cast, ptr)
@@ -307,6 +308,12 @@ func (c *Compiler) compileForStmt(stmt *ForStmt) {
 
 func (c *Compiler) getAlloca(name string) value.Value {
 	if v, ok := c.variables[name]; ok {
+		switch v := v.(type) {
+		case *ir.InstAlloca:
+			return v
+		case *ir.Param:
+			return v
+		}
 		return v
 	}
 	panic("no such variable: " + name)
@@ -315,7 +322,7 @@ func (c *Compiler) getAlloca(name string) value.Value {
 func (c *Compiler) call(expr *CallExpr) value.Value {
 	b := c.currentBlock
 
-	fun := c.getFunc(expr.Name.Name)
+	fun := c.getFunc(expr.Left.(*IdentExpr).Name)
 
 	args := make([]value.Value, 0)
 	for _, e := range expr.Args {
@@ -365,7 +372,17 @@ func (c *Compiler) compileExpr(expr Expr) value.Value {
 		return c.call(expr)
 	case *IdentExpr:
 		v := c.getAlloca(expr.Name)
-		return c.currentBlock.NewLoad(v.(*ir.InstAlloca).ElemType, v)
+		switch v := v.(type) {
+		case *ir.InstAlloca:
+			return c.currentBlock.NewLoad(v.ElemType, v)
+		case *ir.Param:
+			// TODO this is workaround
+			alloca := c.currentBlock.NewAlloca(v.Typ)
+			c.currentBlock.NewStore(v, alloca)
+			return c.currentBlock.NewLoad(alloca.ElemType, alloca)
+		default:
+			panic("unreachable")
+		}
 	case *ParenExpr:
 		return c.compileExpr(expr.Expr)
 	case *BoolExpr:

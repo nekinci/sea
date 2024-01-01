@@ -1,14 +1,20 @@
 extern fun int sum(int a, int b)
 
-struct A {
-    int a
+
+fun int changeValue(int* ab) {
+    *ab = 5333
+    return 0
 }
+
+
+
 
 # main function
 fun int main() {
 
     var int a = 444
-    var int *b = malloc_internal(sizeof(int))
-    *b = 1
+    changeValue(&a)
+    printf_internal("a is %d", a)
     return 3
 }
+

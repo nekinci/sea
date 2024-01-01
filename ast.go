@@ -112,13 +112,13 @@ func (e *BinaryExpr) Pos() (Pos, Pos) {
 func (e *BinaryExpr) IsExpr() {}
 
 type CallExpr struct {
-	Name *IdentExpr
+	Left Expr
 	Args []Expr
 	end  Pos
 }
 
 func (c *CallExpr) Pos() (Pos, Pos) {
-	start, _ := c.Name.Pos()
+	start, _ := c.Left.Pos()
 	end := c.end
 	return start, end
 }
@@ -137,6 +137,19 @@ type IdentExpr struct {
 	Name       string
 	start, end Pos
 }
+
+// RefExpr used for type identifiers, like int*, bool* ...
+type RefExpr struct {
+	Expr Expr
+	end  Pos
+}
+
+func (r *RefExpr) Pos() (Pos, Pos) {
+	start, _ := r.Expr.Pos()
+	return start, r.end
+}
+
+func (r *RefExpr) IsExpr() {}
 
 func (e *IdentExpr) Pos() (Pos, Pos) {
 	return e.start, e.end
@@ -313,7 +326,6 @@ func (c *ContinueStmt) IsStmt() {}
 type VarDefStmt struct {
 	Name  *IdentExpr
 	Type  Expr
-	IsPtr bool
 	Init  Expr
 	start Pos
 }
@@ -358,7 +370,7 @@ func (e *ExprStmt) IsStmt() {}
 
 type Field struct {
 	Name *IdentExpr
-	Type *IdentExpr
+	Type Expr
 }
 
 func (f *Field) Pos() (Pos, Pos) {

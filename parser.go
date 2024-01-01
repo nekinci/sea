@@ -57,24 +57,30 @@ func (p *Parser) parse() *Package {
 
 }
 
+func (p *Parser) parseTypeIdentExpr() Expr {
+	expr := p.parseSelectorExpr()
+	if p.curTok == TokMultiply {
+		p.expect(TokMultiply)
+		return &RefExpr{
+			Expr: expr,
+			end:  p.endOfLastExpected(),
+		}
+	}
+
+	return expr
+}
+
 func (p *Parser) parseVar() *VarDefStmt {
 	p.expect(TokVar)
 	var start = p.startOfLastExpected()
-	_, typ := p.expect(TokIdentifier)
+	typExpr := p.parseTypeIdentExpr()
 
-	isPtr := false
-	if p.curTok == TokMultiply {
-		p.expect(TokMultiply)
-		isPtr = true
-	}
-
-	_, name := p.expect(TokIdentifier)
+	nameExpr := p.parseIdentExpr()
 
 	varDefStmt := &VarDefStmt{
-		Name:  &IdentExpr{Name: name},
-		Type:  &IdentExpr{Name: typ},
+		Name:  nameExpr,
+		Type:  typExpr,
 		Init:  nil,
-		IsPtr: isPtr,
 		start: start,
 	}
 
@@ -98,11 +104,11 @@ func (p *Parser) parseIf() *IfStmt {
 }
 
 func (p *Parser) parseField() *Field {
-	_, typ := p.expect(TokIdentifier)
-	_, name := p.expect(TokIdentifier)
+	var typExpr = p.parseTypeIdentExpr()
+	var nameExpr = p.parseIdentExpr()
 	return &Field{
-		Name: &IdentExpr{Name: name},
-		Type: &IdentExpr{Name: typ},
+		Name: nameExpr,
+		Type: typExpr,
 	}
 }
 
@@ -347,17 +353,22 @@ func (p *Parser) op(tok Token) Operation {
 	}
 }
 
-func (p *Parser) parseSelector() Expr {
+func (p *Parser) parseIdentExpr() *IdentExpr {
 	_, name := p.expect(TokIdentifier)
-	var expr Expr
-	expr = &IdentExpr{Name: name}
+	expr := &IdentExpr{Name: name, start: p.startOfLastExpected(), end: p.endOfLastExpected()}
+	return expr
+}
+
+func (p *Parser) parseSelectorExpr() Expr {
+
+	var expr Expr = p.parseIdentExpr()
 	// a.b.c
 	//     ^
 	// {Left: a, Right: {Left: b, Right: c}}
 	// TODO think parens or something like
 	for p.curTok == TokDot {
 		p.expect(TokDot)
-		r := p.parseSelector()
+		r := p.parseExpr()
 		expr = &SelectorExpr{Left: expr, Right: r}
 	}
 
@@ -400,11 +411,19 @@ func (p *Parser) parseSimpleExpr() Expr {
 		p.expect(TokRParen)
 		return &ParenExpr{Expr: expr, start: start, end: p.endOfLastExpected()}
 	case TokIdentifier:
-		return p.parseIdentExpr()
+		if p.mayNextBe(TokLParen) {
+			return p.parseCallExpr()
+		}
+
+		if p.mayNextBe(TokAssign) {
+			return p.parseAssignExpr()
+		}
+
+		return p.parseSelectorExpr()
 	case TokMultiply:
 		p.expect(TokMultiply)
 		var start = p.startOfLastExpected()
-		expr := p.parseSelector()
+		expr := p.parseSelectorExpr()
 		expr = &UnaryExpr{Op: Mul, Right: expr, start: start}
 		var right Expr
 		if p.curTok == TokAssign {
@@ -424,27 +443,23 @@ func (p *Parser) parseSimpleExpr() Expr {
 	}
 }
 
-func (p *Parser) parseIdentExpr() Expr {
-	_, identifier := p.expect(TokIdentifier)
-	identExpr := &IdentExpr{Name: identifier, start: p.startOfLastExpected(), end: p.endOfLastExpected()}
-	if p.curTok == TokLParen {
-		callExpr := &CallExpr{}
-		callExpr.Name = identExpr
-		p.expect(TokLParen)
-		callExpr.Args = p.parseExprList()
-		p.expect(TokRParen)
-		callExpr.end = p.endOfLastExpected()
+func (p *Parser) parseAssignExpr() *AssignExpr {
+	identExpr := p.parseSelectorExpr()
+	p.expect(TokAssign)
+	assignExpr := &AssignExpr{identExpr, p.parseExpr()}
+	return assignExpr
+}
 
-		return callExpr
-	}
+func (p *Parser) parseCallExpr() *CallExpr {
+	left := p.parseSelectorExpr()
+	p.expect(TokLParen)
+	callExpr := &CallExpr{}
+	callExpr.Left = left
+	callExpr.Args = p.parseExprList()
+	p.expect(TokRParen)
+	callExpr.end = p.endOfLastExpected()
+	return callExpr
 
-	if p.curTok == TokAssign {
-		p.expect(TokAssign)
-		assignExpr := &AssignExpr{identExpr, p.parseExpr()}
-		return assignExpr
-	}
-
-	return identExpr
 }
 
 func (p *Parser) parseExpr() Expr {
@@ -464,11 +479,11 @@ func (p *Parser) parseParams() []*ParamExpr {
 	p.expect(TokLParen)
 	params := make([]*ParamExpr, 0)
 	for p.curTok != TokRParen {
-		_, typeVal := p.expect(TokIdentifier)
-		_, identVal := p.expect(TokIdentifier)
+		typExpr := p.parseTypeIdentExpr()
+		nameExpr := p.parseIdentExpr()
 		param := &ParamExpr{
-			Name: &IdentExpr{Name: identVal},
-			Type: &IdentExpr{Name: typeVal},
+			Name: nameExpr,
+			Type: typExpr,
 		}
 
 		params = append(params, param)

@@ -109,7 +109,7 @@ func (l *Lexer) nextAndBackup() (Token, string) {
 }
 
 func (l *Lexer) skipWhitespace() {
-	for isWhitespace(l.input[l.pos]) {
+	for l.pos < l.inputLen && isWhitespace(l.input[l.pos]) {
 		if l.isNewLine() {
 			l.line++
 			l.col = -1 // To adjust to the 0 position after the if statement

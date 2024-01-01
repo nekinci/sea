@@ -2,7 +2,6 @@ package main
 
 import (
 	"github.com/llir/llvm/ir"
-	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -18,7 +17,7 @@ func Assert(cond bool, msg string) {
 
 func main() {
 
-	_ = os.Setenv("DEBUG", "1")
+	_ = os.Setenv("DEBUG", "")
 
 	compiler := &Compiler{}
 
@@ -27,8 +26,8 @@ func main() {
 	parser := NewParser("./input.file")
 	//parser.printTokens()
 	pckg := parser.parse()
-	writer := NewASTWriter(io.Discard, pckg)
-	writer.start()
+	//	writer := NewASTWriter(io.Discard, pckg)
+	//	writer.start()
 
 	_ = file
 	if err != nil {
