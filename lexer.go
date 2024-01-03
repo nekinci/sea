@@ -288,7 +288,6 @@ func (l *Lexer) tok() Token {
 		}
 
 		return TokLt
-
 	case c == '>':
 		l.pos++
 		if l.input[l.pos] == '=' {
@@ -302,6 +301,9 @@ func (l *Lexer) tok() Token {
 		}
 
 		return TokGt
+	case c == '.':
+		l.pos++
+		return TokDot
 
 	}
 

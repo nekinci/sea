@@ -223,7 +223,7 @@ func (p *Parser) parseBlock() *BlockStmt {
 func (p *Parser) parseExprList() []Expr {
 	exprs := make([]Expr, 0)
 
-	for {
+	for p.curTok != TokRParen {
 		expr := p.parseExpr()
 		exprs = append(exprs, expr)
 		if p.curTok == TokComma {
@@ -362,14 +362,43 @@ func (p *Parser) parseIdentExpr() *IdentExpr {
 func (p *Parser) parseSelectorExpr() Expr {
 
 	var expr Expr = p.parseIdentExpr()
-	// a.b.c
-	//     ^
-	// {Left: a, Right: {Left: b, Right: c}}
-	// TODO think parens or something like
-	for p.curTok == TokDot {
-		p.expect(TokDot)
-		r := p.parseExpr()
-		expr = &SelectorExpr{Left: expr, Right: r}
+	// a.b.c.d
+	//       ^
+	// %1 = {Ident: b, Selector: a}
+	// %2 = {Ident: c, Selector: %1}
+	// %3 = {Ident: d, Selector: %2}
+	// {Ident: d, Selector: {Ident: c, Selector: {Ident: b, Selector: a}}}
+
+	// a.b.c().d
+	// %1 = {Ident: b, Selector: a}
+	// %2 = {Ident: c, Selector: %1}
+	// %3 = {Left: %2, Args:...}
+	// %4 = {Ident: d, Selector: %3}
+	// {Ident: d, Selector: {Left: {Ident: c, Selector: {Ident: b, Selector: A}}, Args:...}}
+
+	// b()
+	// %1 = {Left: b, Args:...}
+
+	// b().c().d
+	// %1 = {Left: b, Args:...}
+	// %2 = {Ident: c, Selector: %1}
+	// %3 = {Left: %2, Args:...}
+	// %4 = {Ident: d, Selector: %3}
+	// {Ident: d, Selector: {Left: {Left: {Ident: c, Selector: {Left: b, Args:...} }, Args:...} , Args:...}}
+
+	for p.curTok == TokDot || p.curTok == TokLParen {
+		if p.curTok == TokLParen {
+			p.expect(TokLParen)
+			callExpr := &CallExpr{}
+			callExpr.Left = expr
+			callExpr.Args = p.parseExprList()
+			p.expect(TokRParen)
+			callExpr.end = p.endOfLastExpected()
+			expr = callExpr
+		} else if p.curTok == TokDot {
+			p.expect(TokDot)
+			expr = &SelectorExpr{Ident: p.parseIdentExpr(), Selector: expr}
+		}
 	}
 
 	return expr
@@ -411,10 +440,6 @@ func (p *Parser) parseSimpleExpr() Expr {
 		p.expect(TokRParen)
 		return &ParenExpr{Expr: expr, start: start, end: p.endOfLastExpected()}
 	case TokIdentifier:
-		if p.mayNextBe(TokLParen) {
-			return p.parseCallExpr()
-		}
-
 		if p.mayNextBe(TokAssign) {
 			return p.parseAssignExpr()
 		}
@@ -448,18 +473,6 @@ func (p *Parser) parseAssignExpr() *AssignExpr {
 	p.expect(TokAssign)
 	assignExpr := &AssignExpr{identExpr, p.parseExpr()}
 	return assignExpr
-}
-
-func (p *Parser) parseCallExpr() *CallExpr {
-	left := p.parseSelectorExpr()
-	p.expect(TokLParen)
-	callExpr := &CallExpr{}
-	callExpr.Left = left
-	callExpr.Args = p.parseExprList()
-	p.expect(TokRParen)
-	callExpr.end = p.endOfLastExpected()
-	return callExpr
-
 }
 
 func (p *Parser) parseExpr() Expr {

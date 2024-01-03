@@ -156,13 +156,13 @@ func (e *IdentExpr) Pos() (Pos, Pos) {
 }
 
 type SelectorExpr struct {
-	Left  Expr
-	Right Expr
+	Ident    Expr
+	Selector Expr
 }
 
 func (e *SelectorExpr) Pos() (Pos, Pos) {
-	start, _ := e.Left.Pos()
-	_, end := e.Right.Pos()
+	start, _ := e.Ident.Pos()
+	_, end := e.Selector.Pos()
 	return start, end
 }
 
