@@ -138,6 +138,16 @@ type IdentExpr struct {
 	start, end Pos
 }
 
+type ArrayLitExpr struct {
+	start, end Pos
+	Elems      []Expr
+}
+
+func (a *ArrayLitExpr) Pos() (Pos, Pos) {
+	return a.start, a.end
+}
+func (a *ArrayLitExpr) IsExpr() {}
+
 // RefExpr used for type identifiers, like int*, bool* ...
 type RefExpr struct {
 	Expr Expr
@@ -171,6 +181,19 @@ func (e *SelectorExpr) IsExpr() {}
 type NilExpr struct {
 	start, end Pos
 }
+
+type ArrayTypeExpr struct {
+	Type Expr
+	Size int
+	end  Pos // RBracket pos
+}
+
+func (e *ArrayTypeExpr) Pos() (Pos, Pos) {
+	start, _ := e.Type.Pos()
+	return start, e.end
+}
+
+func (e *ArrayTypeExpr) IsExpr() {}
 
 func (e *NilExpr) Pos() (Pos, Pos) {
 	return e.start, e.end

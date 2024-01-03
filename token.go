@@ -60,4 +60,6 @@ const (
 	TokNil           Token = "nil"
 	TokSizeof        Token = "sizeof" // sizeof is a special unary operator that can be used to calculate the size of type in a compile time.
 	TokDot           Token = "."
+	TokLBracket      Token = "["
+	TokRBracket      Token = "]"
 )

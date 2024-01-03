@@ -10,11 +10,37 @@ import (
 	"os"
 )
 
+type Scope struct {
+	variables map[string]value.Value
+	Parent    *Scope
+	Children  []*Scope
+}
+
+func (s *Scope) Lookup(name string) value.Value {
+	if s.variables[name] != nil {
+		return s.variables[name]
+	}
+
+	if s.Parent != nil {
+		return s.Parent.Lookup(name)
+	}
+
+	panic("No variable found: " + name)
+}
+
+func (s *Scope) Define(name string, v value.Value) {
+	if s.variables[name] != nil {
+		panic("Duplicate variable: " + name)
+	}
+
+	s.variables[name] = v
+}
+
 const entryBlock string = "entry"
 
 type Compiler struct {
 	module        *ir.Module
-	variables     map[string]value.Value
+	currentScope  *Scope
 	currentBlock  *ir.Block
 	breakBlock    *ir.Block
 	continueBlock *ir.Block
@@ -24,6 +50,14 @@ type Compiler struct {
 	types       map[string]types.Type
 	globals     map[string]value.Value
 	pkg         *Package
+}
+
+func (c *Compiler) Define(name string, v value.Value) {
+	c.currentScope.Define(name, v)
+}
+
+func (c *Compiler) Lookup(name string) value.Value {
+	return c.currentScope.Lookup(name)
 }
 
 func (c *Compiler) compile() {
@@ -109,6 +143,10 @@ func (c *Compiler) resolveType(expr Expr) types.Type {
 	case *RefExpr:
 		typ := c.resolveType(expr.Expr)
 		return types.NewPointer(typ)
+	case *ArrayTypeExpr:
+		typ := c.resolveType(expr.Type)
+		// TODO make sure this expr.Size is correct
+		return types.NewArray(uint64(expr.Size), typ)
 	}
 
 	panic("unreachable")
@@ -121,26 +159,40 @@ func (c *Compiler) defineType(expr Expr) types.Type {
 }
 
 func (c *Compiler) compileVarDef(stmt *VarDefStmt) {
-	Assert(c.variables != nil, "un-initialized variable map")
+	Assert(c.currentScope != nil, "un-initialized scope")
 	Assert(c.currentBlock != nil, "currentBlock cannot be nil")
 	block := c.currentBlock
 
 	typ := c.resolveType(stmt.Type)
 
 	ptr := block.NewAlloca(typ)
-	c.variables[stmt.Name.Name] = ptr
+	c.Define(stmt.Name.Name, ptr)
 
 	if stmt.Init != nil {
 		if _, ok := stmt.Init.(*NilExpr); ok {
 			block.NewStore(constant.NewNull(typ.(*types.PointerType)), ptr)
 		} else {
-			if _, ok := stmt.Type.(*RefExpr); ok {
+			switch stmt.Type.(type) {
+			case *RefExpr:
 				e := c.compileExpr(stmt.Init)
 				cast := c.currentBlock.NewBitCast(e, typ)
 				block.NewStore(cast, ptr)
-			} else {
+			case *ArrayTypeExpr:
+				arrayLit, ok := stmt.Init.(*ArrayLitExpr)
+				Assert(ok, "ArrayLit expected")
+				elems := arrayLit.Elems
+				for i, elem := range elems {
+					e := c.compileExpr(elem)
+					zero := constant.NewInt(types.I64, 0)
+					index := constant.NewInt(types.I64, int64(i))
+					gep := c.currentBlock.NewGetElementPtr(typ, ptr, zero, index)
+					gep.InBounds = true
+					c.currentBlock.NewStore(e, gep)
+				}
+			default:
 				block.NewStore(c.compileExpr(stmt.Init), ptr)
 			}
+
 		}
 	}
 }
@@ -149,6 +201,11 @@ func (c *Compiler) compileFunc(def *FuncDefStmt) *ir.Func {
 	Assert(def.Name != nil, "type checker has to handle this")
 	Assert(def.Name.Name != "", "name can't be empty")
 	name := def.Name.Name
+	c.currentScope = &Scope{
+		variables: make(map[string]value.Value),
+		Parent:    c.currentScope,
+		Children:  make([]*Scope, 0),
+	}
 	typ := c.resolveType(def.Type)
 
 	params := make([]*ir.Param, 0)
@@ -159,7 +216,7 @@ func (c *Compiler) compileFunc(def *FuncDefStmt) *ir.Func {
 		params = append(params, param)
 
 		// TODO merge with compileVarDef function
-		c.variables[def.Name.Name] = param
+		c.Define(def.Name.Name, param)
 	}
 	f := c.module.NewFunc(name, typ, params...)
 	c.funcs[name] = f
@@ -307,16 +364,14 @@ func (c *Compiler) compileForStmt(stmt *ForStmt) {
 }
 
 func (c *Compiler) getAlloca(name string) value.Value {
-	if v, ok := c.variables[name]; ok {
-		switch v := v.(type) {
-		case *ir.InstAlloca:
-			return v
-		case *ir.Param:
-			return v
-		}
+	v := c.Lookup(name)
+	switch v := v.(type) {
+	case *ir.InstAlloca:
+		return v
+	case *ir.Param:
 		return v
 	}
-	panic("no such variable: " + name)
+	return v
 }
 
 func (c *Compiler) call(expr *CallExpr) value.Value {
@@ -532,7 +587,13 @@ func generateOperation(block *ir.Block, value1, value2 value.Value, op Operation
 
 func (c *Compiler) init() {
 	Assert(c.module != nil, "module not initialized")
-	c.variables = make(map[string]value.Value)
+
+	c.currentScope = &Scope{
+		variables: make(map[string]value.Value),
+		Parent:    nil,
+		Children:  make([]*Scope, 0),
+	}
+
 	c.initBuiltinTypes()
 	c.initBuiltinFuncs()
 }

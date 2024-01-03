@@ -1,24 +1,10 @@
 extern fun int sum(int a, int b)
 
 
-struct A {
-    int* a
-}
-
-fun int changeValue(int* ab) {
-    *ab = 5333 + *ab
-    return 0
-}
-
-
-
 
 # main function
 fun int main() {
-    a.b.c.d()
-    var int a = 444
-    changeValue(&a)
-    printf_internal("a is %d", a)
+    var int[2] b = [1, 2]
     return 3
 }
 

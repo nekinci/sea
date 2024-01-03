@@ -301,6 +301,12 @@ func (l *Lexer) tok() Token {
 		}
 
 		return TokGt
+	case c == '[':
+		l.pos++
+		return TokLBracket
+	case c == ']':
+		l.pos++
+		return TokRBracket
 	case c == '.':
 		l.pos++
 		return TokDot

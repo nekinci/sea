@@ -67,6 +67,25 @@ func (p *Parser) parseTypeIdentExpr() Expr {
 		}
 	}
 
+	// TODO should it be like this?
+	if p.curTok == TokLBracket {
+		p.expect(TokLBracket)
+		var size int
+		if p.curTok == TokNumber {
+			i, err := strconv.ParseInt(p.curVal, 10, 64)
+			Assert(err == nil, "Taken number invalid")
+			size = int(i)
+			p.expect(TokNumber)
+		}
+
+		p.expect(TokRBracket)
+		return &ArrayTypeExpr{
+			Type: expr,
+			Size: size,
+			end:  p.endOfLastExpected(),
+		}
+	}
+
 	return expr
 }
 
@@ -406,6 +425,20 @@ func (p *Parser) parseSelectorExpr() Expr {
 
 func (p *Parser) parseSimpleExpr() Expr {
 	switch p.curTok {
+	case TokLBracket:
+		p.expect(TokLBracket)
+		var elems = make([]Expr, 0)
+		arrayValue := &ArrayLitExpr{start: p.startOfLastExpected()}
+		for p.curTok != TokRBracket {
+			elems = append(elems, p.parseExpr())
+			if p.curTok == TokComma {
+				p.expect(TokComma)
+			}
+		}
+		arrayValue.Elems = elems
+		p.expect(TokRBracket)
+		arrayValue.end = p.endOfLastExpected()
+		return arrayValue
 	case TokNil:
 		p.expect(TokNil)
 		return &NilExpr{p.startOfLastExpected(), p.endOfLastExpected()}
