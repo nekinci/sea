@@ -4,7 +4,8 @@ extern fun int sum(int a, int b)
 
 # main function
 fun int main() {
-    var int[2] b = [1, 2]
+    var int[2] b = [55, 2]
+    printf_internal("hello world %d\n", b[1])
     return 3
 }
 

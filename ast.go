@@ -184,7 +184,7 @@ type NilExpr struct {
 
 type ArrayTypeExpr struct {
 	Type Expr
-	Size int
+	Size Expr
 	end  Pos // RBracket pos
 }
 
@@ -403,3 +403,15 @@ func (f *Field) Pos() (Pos, Pos) {
 
 }
 func (f *Field) IsExpr() {}
+
+type IndexExpr struct {
+	Left       Expr
+	Index      Expr
+	start, end Pos
+}
+
+func (i *IndexExpr) Pos() (Pos, Pos) {
+	return i.start, i.end
+}
+
+func (i *IndexExpr) IsExpr() {}

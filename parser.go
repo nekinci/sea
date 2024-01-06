@@ -7,6 +7,13 @@ import (
 	"strconv"
 )
 
+type bracketMode uint8
+
+const (
+	bracketType  bracketMode = 0
+	bracketIndex bracketMode = 1
+)
+
 type Parser struct {
 	*Lexer
 	module     *Package
@@ -58,30 +65,11 @@ func (p *Parser) parse() *Package {
 }
 
 func (p *Parser) parseTypeIdentExpr() Expr {
-	expr := p.parseSelectorExpr()
+	expr := p.parseSelectorExpr(bracketType)
 	if p.curTok == TokMultiply {
 		p.expect(TokMultiply)
 		return &RefExpr{
 			Expr: expr,
-			end:  p.endOfLastExpected(),
-		}
-	}
-
-	// TODO should it be like this?
-	if p.curTok == TokLBracket {
-		p.expect(TokLBracket)
-		var size int
-		if p.curTok == TokNumber {
-			i, err := strconv.ParseInt(p.curVal, 10, 64)
-			Assert(err == nil, "Taken number invalid")
-			size = int(i)
-			p.expect(TokNumber)
-		}
-
-		p.expect(TokRBracket)
-		return &ArrayTypeExpr{
-			Type: expr,
-			Size: size,
 			end:  p.endOfLastExpected(),
 		}
 	}
@@ -378,7 +366,7 @@ func (p *Parser) parseIdentExpr() *IdentExpr {
 	return expr
 }
 
-func (p *Parser) parseSelectorExpr() Expr {
+func (p *Parser) parseSelectorExpr(lbracketMode bracketMode) Expr {
 
 	var expr Expr = p.parseIdentExpr()
 	// a.b.c.d
@@ -405,7 +393,7 @@ func (p *Parser) parseSelectorExpr() Expr {
 	// %4 = {Ident: d, Selector: %3}
 	// {Ident: d, Selector: {Left: {Left: {Ident: c, Selector: {Left: b, Args:...} }, Args:...} , Args:...}}
 
-	for p.curTok == TokDot || p.curTok == TokLParen {
+	for p.curTok == TokDot || p.curTok == TokLParen || p.curTok == TokLBracket {
 		if p.curTok == TokLParen {
 			p.expect(TokLParen)
 			callExpr := &CallExpr{}
@@ -417,12 +405,41 @@ func (p *Parser) parseSelectorExpr() Expr {
 		} else if p.curTok == TokDot {
 			p.expect(TokDot)
 			expr = &SelectorExpr{Ident: p.parseIdentExpr(), Selector: expr}
+		} else if p.curTok == TokLBracket {
+			p.expect(TokLBracket)
+			switch lbracketMode {
+			case bracketType:
+				arrayType := &ArrayTypeExpr{
+					Type: expr,
+					end:  Pos{},
+				}
+				if p.curTok != TokRBracket {
+					arrayType.Size = p.parseNumberExpr()
+				}
+				p.expect(TokRBracket)
+				arrayType.end = p.endOfLastExpected()
+				return arrayType
+			case bracketIndex:
+				indexExpr := &IndexExpr{start: p.startOfLastExpected(), Left: expr}
+				indexExpr.Index = p.parseExpr()
+				p.expect(TokRBracket)
+				indexExpr.end = p.endOfLastExpected()
+				return indexExpr
+			default:
+				panic("unreachable lbracket mode")
+			}
 		}
 	}
 
 	return expr
 }
 
+func (p *Parser) parseNumberExpr() *NumberExpr {
+	_, val := p.expect(TokNumber)
+	v, err := strconv.ParseInt(val, 10, 64)
+	Assert(err == nil, fmt.Sprintf("Invalid number: %v", err))
+	return &NumberExpr{Value: v, start: p.startOfLastExpected(), end: p.endOfLastExpected()}
+}
 func (p *Parser) parseSimpleExpr() Expr {
 	switch p.curTok {
 	case TokLBracket:
@@ -459,10 +476,7 @@ func (p *Parser) parseSimpleExpr() Expr {
 		// TODO Is UnaryExpr or special handling
 		return &UnaryExpr{Op: Sizeof, Right: &IdentExpr{Name: typ, start: identStart, end: identEnd}, start: start}
 	case TokNumber:
-		_, val := p.expect(TokNumber)
-		v, err := strconv.ParseInt(val, 10, 64)
-		Assert(err == nil, fmt.Sprintf("Invalid number: %v", err))
-		return &NumberExpr{Value: v, start: p.startOfLastExpected(), end: p.endOfLastExpected()}
+		return p.parseNumberExpr()
 	case TokTrue, TokFalse:
 		tok, _ := p.expectAnyOf(TokTrue, TokFalse)
 		return &BoolExpr{Value: tok == TokTrue, start: p.startOfLastExpected(), end: p.endOfLastExpected()}
@@ -477,11 +491,11 @@ func (p *Parser) parseSimpleExpr() Expr {
 			return p.parseAssignExpr()
 		}
 
-		return p.parseSelectorExpr()
+		return p.parseSelectorExpr(bracketIndex)
 	case TokMultiply:
 		p.expect(TokMultiply)
 		var start = p.startOfLastExpected()
-		expr := p.parseSelectorExpr()
+		expr := p.parseSelectorExpr(bracketIndex)
 		expr = &UnaryExpr{Op: Mul, Right: expr, start: start}
 		var right Expr
 		if p.curTok == TokAssign {
@@ -502,7 +516,7 @@ func (p *Parser) parseSimpleExpr() Expr {
 }
 
 func (p *Parser) parseAssignExpr() *AssignExpr {
-	identExpr := p.parseSelectorExpr()
+	identExpr := p.parseSelectorExpr(bracketIndex)
 	p.expect(TokAssign)
 	assignExpr := &AssignExpr{identExpr, p.parseExpr()}
 	return assignExpr

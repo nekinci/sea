@@ -145,8 +145,7 @@ func (c *Compiler) resolveType(expr Expr) types.Type {
 		return types.NewPointer(typ)
 	case *ArrayTypeExpr:
 		typ := c.resolveType(expr.Type)
-		// TODO make sure this expr.Size is correct
-		return types.NewArray(uint64(expr.Size), typ)
+		return types.NewArray(uint64(expr.Size.(*NumberExpr).Value), typ)
 	}
 
 	panic("unreachable")
@@ -474,6 +473,16 @@ func (c *Compiler) compileExpr(expr Expr) value.Value {
 		Assert(load.Src != nil, "assign_expr load.Src is nil")
 		c.currentBlock.NewStore(right, load.Src)
 		return left
+	case *IndexExpr:
+		left := c.compileExpr(expr.Left)
+		index := c.compileExpr(expr.Index)
+		zero := constant.NewInt(types.I64, 0)
+		leftInstLoad, ok := left.(*ir.InstLoad)
+		Assert(ok, "IndexExpr left operand is invalid.")
+		gep := c.currentBlock.NewGetElementPtr(leftInstLoad.ElemType, leftInstLoad.Src, zero, index)
+		arrayType, ok := leftInstLoad.ElemType.(*types.ArrayType)
+		Assert(ok, "Index operation cannot be used with non-array type")
+		return c.currentBlock.NewLoad(arrayType.ElemType, gep)
 	default:
 		panic("unreachable")
 	}
