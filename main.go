@@ -15,6 +15,12 @@ func Assert(cond bool, msg string) {
 	panic(msg)
 }
 
+func AssertErr(err error) {
+	if err != nil {
+		panic(err.Error())
+	}
+}
+
 func main() {
 
 	_ = os.Setenv("DEBUG", "")

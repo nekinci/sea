@@ -188,6 +188,9 @@ func (l *Lexer) tok() Token {
 	case c == ';':
 		l.pos++
 		return TokSemicolon
+	case c == ':':
+		l.pos++
+		return TokColon
 	case unicode.IsLetter(rune(c)):
 
 		for l.pos < l.inputLen && (unicode.IsDigit(rune(l.input[l.pos])) || unicode.IsLetter(rune(l.input[l.pos])) || l.input[l.pos] == '_') {

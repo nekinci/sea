@@ -14,6 +14,7 @@ type Scope struct {
 	variables map[string]value.Value
 	Parent    *Scope
 	Children  []*Scope
+	// TODO Shorthands map[string]value.Value // Like this.a -> just a if it is not defined in the scope
 }
 
 func (s *Scope) Lookup(name string) value.Value {
@@ -38,18 +39,25 @@ func (s *Scope) Define(name string, v value.Value) {
 
 const entryBlock string = "entry"
 
+type fieldIndexKey struct {
+	field, typ string
+}
+
 type Compiler struct {
 	module        *ir.Module
 	currentScope  *Scope
 	currentBlock  *ir.Block
 	breakBlock    *ir.Block
 	continueBlock *ir.Block
+	currentFunc   *ir.Func
+	currentType   types.Type
+	currentAlloc  *ir.InstAlloca
 
-	currentFunc *ir.Func
-	funcs       map[string]*ir.Func
-	types       map[string]types.Type
-	globals     map[string]value.Value
-	pkg         *Package
+	funcs         map[string]*ir.Func
+	types         map[string]types.Type
+	typesIndexMap map[fieldIndexKey]int
+	globals       map[string]value.Value
+	pkg           *Package
 }
 
 func (c *Compiler) Define(name string, v value.Value) {
@@ -74,6 +82,7 @@ func (c *Compiler) initBuiltinTypes() {
 	// just add them to the dictionary so that make them accessible in the compiler
 	if c.types == nil {
 		c.types = make(map[string]types.Type)
+		c.typesIndexMap = make(map[fieldIndexKey]int)
 	}
 
 	c.types["void"] = types.Void
@@ -140,7 +149,7 @@ func (c *Compiler) resolveType(expr Expr) types.Type {
 		}
 
 		panic(fmt.Sprintf("no provided type %s", expr.Name))
-	case *RefExpr:
+	case *RefTypeExpr:
 		typ := c.resolveType(expr.Expr)
 		return types.NewPointer(typ)
 	case *ArrayTypeExpr:
@@ -157,46 +166,33 @@ func (c *Compiler) defineType(expr Expr) types.Type {
 	panic("TODO")
 }
 
+func (c *Compiler) resetTempFields() {
+	c.currentAlloc = nil
+	c.currentType = nil
+}
+
 func (c *Compiler) compileVarDef(stmt *VarDefStmt) {
 	Assert(c.currentScope != nil, "un-initialized scope")
 	Assert(c.currentBlock != nil, "currentBlock cannot be nil")
-	block := c.currentBlock
-
 	typ := c.resolveType(stmt.Type)
-
-	ptr := block.NewAlloca(typ)
+	c.currentType = typ
+	ptr := c.currentBlock.NewAlloca(typ)
+	c.currentAlloc = ptr
+	defer c.resetTempFields()
 	c.Define(stmt.Name.Name, ptr)
 
 	if stmt.Init != nil {
-		if _, ok := stmt.Init.(*NilExpr); ok {
-			block.NewStore(constant.NewNull(typ.(*types.PointerType)), ptr)
+		right := c.compileExpr(stmt.Init)
+		if v, ok := right.(*constant.Null); ok {
+			cast := c.currentBlock.NewBitCast(v, typ)
+			c.currentBlock.NewStore(cast, ptr)
 		} else {
-			switch stmt.Type.(type) {
-			case *RefExpr:
-				e := c.compileExpr(stmt.Init)
-				cast := c.currentBlock.NewBitCast(e, typ)
-				block.NewStore(cast, ptr)
-			case *ArrayTypeExpr:
-				arrayLit, ok := stmt.Init.(*ArrayLitExpr)
-				Assert(ok, "ArrayLit expected")
-				elems := arrayLit.Elems
-				for i, elem := range elems {
-					e := c.compileExpr(elem)
-					zero := constant.NewInt(types.I64, 0)
-					index := constant.NewInt(types.I64, int64(i))
-					gep := c.currentBlock.NewGetElementPtr(typ, ptr, zero, index)
-					gep.InBounds = true
-					c.currentBlock.NewStore(e, gep)
-				}
-			default:
-				block.NewStore(c.compileExpr(stmt.Init), ptr)
-			}
-
+			c.currentBlock.NewStore(right, ptr)
 		}
 	}
 }
 
-func (c *Compiler) compileFunc(def *FuncDefStmt) *ir.Func {
+func (c *Compiler) compileFunc(def *FuncDefStmt, isMethod bool, thisType types.Type) *ir.Func {
 	Assert(def.Name != nil, "type checker has to handle this")
 	Assert(def.Name.Name != "", "name can't be empty")
 	name := def.Name.Name
@@ -209,7 +205,14 @@ func (c *Compiler) compileFunc(def *FuncDefStmt) *ir.Func {
 
 	params := make([]*ir.Param, 0)
 
+	if isMethod {
+		param := ir.NewParam("this", thisType)
+		params = append(params, param)
+		c.Define("this", param)
+	}
+
 	for _, def := range def.Params {
+		Assert(def.Name.Name != "this", "param name cannot be this")
 		typ2 := c.resolveType(def.Type)
 		param := ir.NewParam(def.Name.Name, typ2)
 		params = append(params, param)
@@ -228,6 +231,7 @@ func (c *Compiler) compileFunc(def *FuncDefStmt) *ir.Func {
 			c.compileStmt(innerStmt)
 		}
 	} else {
+		Assert(!isMethod, "Methods cannot be external")
 		f.Linkage = enum.LinkageExternal
 	}
 
@@ -236,9 +240,10 @@ func (c *Compiler) compileFunc(def *FuncDefStmt) *ir.Func {
 
 func (c *Compiler) compileStructDef(def *StructDefStmt) {
 	str := types.NewStruct()
-	for _, field := range def.Fields {
+	for i, field := range def.Fields {
 		typ := c.resolveType(field.Type)
 		str.Fields = append(str.Fields, typ)
+		c.typesIndexMap[fieldIndexKey{field.Name.Name, def.Name.Name}] = i
 	}
 	td := c.module.NewTypeDef(def.Name.Name, str)
 	c.types[def.Name.Name] = td
@@ -261,7 +266,7 @@ func (c *Compiler) compileStmt(stmt Stmt) {
 	case *IfStmt:
 		c.compileIfStmt(innerStmt)
 	case *FuncDefStmt:
-		c.compileFunc(innerStmt)
+		c.compileFunc(innerStmt, false, nil)
 	case *VarDefStmt:
 		c.compileVarDef(innerStmt)
 	case *ForStmt:
@@ -272,6 +277,17 @@ func (c *Compiler) compileStmt(stmt Stmt) {
 		for _, innerStmt := range innerStmt.Stmts {
 			c.compileStmt(innerStmt)
 		}
+	case *ImplStmt:
+		thisType := c.resolveType(innerStmt.Type)
+
+		for _, s := range innerStmt.Stmts {
+			switch implStmt := s.(type) {
+			case *FuncDefStmt:
+				implStmt.ImplOf = innerStmt // make sure the correct impl is used
+				c.compileFunc(implStmt, true, thisType)
+			}
+		}
+
 	default:
 		panic("unreachable compileStmt on compiler")
 
@@ -387,6 +403,14 @@ func (c *Compiler) call(expr *CallExpr) value.Value {
 	return b.NewCall(fun, args...)
 }
 
+func (c *Compiler) resolveFieldIndex(name, typ string) (int, error) {
+	if index, ok := c.typesIndexMap[fieldIndexKey{name, typ}]; ok {
+		return index, nil
+	}
+
+	return -1, fmt.Errorf("unknown field index: %v for %s", name, typ)
+}
+
 // sizeOfCompilationTime returns the size of
 func sizeof(p types.Type) (int64 uint64) {
 	switch p := p.(type) {
@@ -397,8 +421,56 @@ func sizeof(p types.Type) (int64 uint64) {
 	}
 }
 
+func (c *Compiler) newArray(expr *ArrayLitExpr, size uint64, typ types.Type) *ir.InstLoad {
+	var alloc = c.currentAlloc
+	if alloc == nil {
+		alloc = c.currentBlock.NewAlloca(typ)
+	}
+	elems := expr.Elems
+	for i, elem := range elems {
+		e := c.compileExpr(elem)
+		zero := constant.NewInt(types.I64, 0)
+		index := constant.NewInt(types.I64, int64(i))
+		gep := c.currentBlock.NewGetElementPtr(typ, alloc, zero, index)
+		gep.InBounds = true
+		c.currentBlock.NewStore(e, gep)
+	}
+
+	return c.currentBlock.NewLoad(typ, alloc)
+}
+
+func (c *Compiler) newObject(expr *ObjectLitExpr, alloc *ir.InstAlloca) *ir.InstLoad {
+	typ := c.resolveType(expr.Type)
+	c.resetTempFields()
+
+	for _, kv := range expr.KeyValue {
+		key, ok := kv.Key.(*IdentExpr)
+		Assert(ok, "Key must be a identifier")
+		fieldIndex, err := c.resolveFieldIndex(key.Name, typ.Name())
+		AssertErr(err)
+		v := c.compileExpr(kv.Value)
+		gep := c.currentBlock.NewGetElementPtr(typ, alloc, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, int64(fieldIndex)))
+		c.currentBlock.NewStore(v, gep)
+	}
+	return c.currentBlock.NewLoad(typ, alloc)
+}
+
+func (c *Compiler) getIndexedType(load *ir.InstLoad, idx int) types.Type {
+	switch l := load.ElemType.(type) {
+	case *types.StructType:
+		return l.Fields[idx]
+	default:
+		panic("Unreachable indexed type")
+	}
+}
+
 func (c *Compiler) compileExpr(expr Expr) value.Value {
 	switch expr := expr.(type) {
+	case *NilExpr:
+		null := constant.NewNull(types.NewPointer(types.Void))
+		return null
+	case *ArrayLitExpr:
+		return c.newArray(expr, uint64(len(expr.Elems)), types.NewArray(2, c.resolveType(&IdentExpr{Name: "Type"})))
 	case *BinaryExpr:
 		left := c.compileExpr(expr.Left)
 		right := c.compileExpr(expr.Right)
@@ -421,7 +493,12 @@ func (c *Compiler) compileExpr(expr Expr) value.Value {
 		var zero = constant.NewInt(types.I8, 0)
 		gep := constant.NewGetElementPtr(v2.Typ, strPtr, zero, zero)
 		return c.currentBlock.NewCall(c.getFunc("make_string"), gep)
-
+	case *ObjectLitExpr:
+		alloc := c.currentAlloc
+		if alloc == nil {
+			alloc = c.currentBlock.NewAlloca(c.resolveType(expr.Type))
+		}
+		return c.newObject(expr, alloc)
 	case *CallExpr:
 		return c.call(expr)
 	case *IdentExpr:
@@ -483,6 +560,16 @@ func (c *Compiler) compileExpr(expr Expr) value.Value {
 		arrayType, ok := leftInstLoad.ElemType.(*types.ArrayType)
 		Assert(ok, "Index operation cannot be used with non-array type")
 		return c.currentBlock.NewLoad(arrayType.ElemType, gep)
+	case *SelectorExpr:
+		sel := c.compileExpr(expr.Selector)
+		selLoad, ok := sel.(*ir.InstLoad)
+		Assert(ok, "Selector invalid")
+		zero := constant.NewInt(types.I32, 0)
+		fieldIndex, err := c.resolveFieldIndex(expr.Ident.(*IdentExpr).Name, sel.Type().Name())
+		AssertErr(err)
+		idx := constant.NewInt(types.I32, int64(fieldIndex))
+		gep := c.currentBlock.NewGetElementPtr(selLoad.ElemType, selLoad.Src, zero, idx)
+		return c.currentBlock.NewLoad(c.getIndexedType(selLoad, fieldIndex), gep)
 	default:
 		panic("unreachable")
 	}

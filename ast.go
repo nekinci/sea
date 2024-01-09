@@ -138,6 +138,10 @@ type IdentExpr struct {
 	start, end Pos
 }
 
+type ComplexLiteral interface {
+	IsComplexLiteral()
+}
+
 type ArrayLitExpr struct {
 	start, end Pos
 	Elems      []Expr
@@ -146,20 +150,21 @@ type ArrayLitExpr struct {
 func (a *ArrayLitExpr) Pos() (Pos, Pos) {
 	return a.start, a.end
 }
-func (a *ArrayLitExpr) IsExpr() {}
+func (a *ArrayLitExpr) IsExpr()           {}
+func (a *ArrayLitExpr) IsComplexLiteral() {}
 
-// RefExpr used for type identifiers, like int*, bool* ...
-type RefExpr struct {
+// RefTypeExpr used for type identifiers, like int*, bool* ...
+type RefTypeExpr struct {
 	Expr Expr
 	end  Pos
 }
 
-func (r *RefExpr) Pos() (Pos, Pos) {
+func (r *RefTypeExpr) Pos() (Pos, Pos) {
 	start, _ := r.Expr.Pos()
 	return start, r.end
 }
 
-func (r *RefExpr) IsExpr() {}
+func (r *RefTypeExpr) IsExpr() {}
 
 func (e *IdentExpr) Pos() (Pos, Pos) {
 	return e.start, e.end
@@ -209,6 +214,7 @@ type FuncDefStmt struct {
 	Type       Expr
 	Params     []*ParamExpr
 	Body       *BlockStmt
+	ImplOf     *ImplStmt
 	IsExternal bool
 	start      Pos
 	end        *Pos
@@ -253,7 +259,9 @@ func (s *BlockStmt) Pos() (Pos, Pos) {
 
 type ImplStmt struct {
 	Stmts      []Stmt
+	Type       Expr
 	Implies    []*IdentExpr
+	RefOfType  DefStmt
 	start, end Pos
 }
 
@@ -415,3 +423,29 @@ func (i *IndexExpr) Pos() (Pos, Pos) {
 }
 
 func (i *IndexExpr) IsExpr() {}
+
+type ObjectLitExpr struct {
+	Type       Expr
+	KeyValue   []*KeyValueExpr
+	start, end Pos
+}
+
+func (o *ObjectLitExpr) Pos() (Pos, Pos) {
+	return o.start, o.end
+}
+
+func (o *ObjectLitExpr) IsExpr()           {}
+func (o *ObjectLitExpr) IsComplexLiteral() {}
+
+type KeyValueExpr struct {
+	Key   Expr
+	Value Expr
+}
+
+func (kv *KeyValueExpr) IsExpr() {}
+
+func (kv *KeyValueExpr) Pos() (Pos, Pos) {
+	start, _ := kv.Key.Pos()
+	_, end := kv.Value.Pos()
+	return start, end
+}

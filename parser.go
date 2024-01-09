@@ -10,8 +10,9 @@ import (
 type bracketMode uint8
 
 const (
-	bracketType  bracketMode = 0
-	bracketIndex bracketMode = 1
+	bracketNone  bracketMode = iota
+	bracketType  bracketMode = 1
+	bracketIndex bracketMode = 2
 )
 
 type Parser struct {
@@ -68,7 +69,7 @@ func (p *Parser) parseTypeIdentExpr() Expr {
 	expr := p.parseSelectorExpr(bracketType)
 	if p.curTok == TokMultiply {
 		p.expect(TokMultiply)
-		return &RefExpr{
+		return &RefTypeExpr{
 			Expr: expr,
 			end:  p.endOfLastExpected(),
 		}
@@ -93,7 +94,8 @@ func (p *Parser) parseVar() *VarDefStmt {
 
 	if p.curTok == TokAssign {
 		p.expect(TokAssign)
-		varDefStmt.Init = p.parseExpr()
+		expr := p.parseExpr()
+		varDefStmt.Init = expr
 	}
 	return varDefStmt
 }
@@ -209,7 +211,23 @@ func (p *Parser) parseStmt() Stmt {
 }
 
 func (p *Parser) parseImpl() *ImplStmt {
-	panic("TODO")
+	p.expect(TokImpl)
+	implStmt := &ImplStmt{start: p.startOfLastExpected()}
+	implStmt.Type = p.parseTypeIdentExpr()
+	p.expect(TokLBrace)
+	implStmt.Stmts = make([]Stmt, 0)
+
+	if p.curTok == TokColon {
+		panic("Unhandled yet tok colon on impl block")
+	}
+
+	for p.curTok != TokRBrace {
+		stmt := p.parseFunc()
+		implStmt.Stmts = append(implStmt.Stmts, stmt)
+	}
+	p.expect(TokRBrace)
+	implStmt.end = p.endOfLastExpected()
+	return implStmt
 }
 
 func (p *Parser) parseBlock() *BlockStmt {
@@ -424,11 +442,34 @@ func (p *Parser) parseSelectorExpr(lbracketMode bracketMode) Expr {
 				indexExpr.Index = p.parseExpr()
 				p.expect(TokRBracket)
 				indexExpr.end = p.endOfLastExpected()
-				return indexExpr
+				expr = indexExpr
 			default:
 				panic("unreachable lbracket mode")
 			}
 		}
+	}
+
+	// Is it fit in here?
+	if p.curTok == TokLBrace {
+		p.expect(TokLBrace)
+		objLit := &ObjectLitExpr{
+			Type:  expr,
+			start: p.startOfLastExpected(),
+		}
+		keyValues := make([]*KeyValueExpr, 0)
+		for p.curTok != TokRBrace {
+			kv := p.parseKeyValueExpr()
+			keyValues = append(keyValues, kv)
+			if p.curTok != TokComma {
+				break
+			} else {
+				p.expect(TokComma)
+			}
+		}
+		p.expect(TokRBrace)
+		objLit.KeyValue = keyValues
+		objLit.end = p.endOfLastExpected()
+		expr = objLit
 	}
 
 	return expr
@@ -440,6 +481,15 @@ func (p *Parser) parseNumberExpr() *NumberExpr {
 	Assert(err == nil, fmt.Sprintf("Invalid number: %v", err))
 	return &NumberExpr{Value: v, start: p.startOfLastExpected(), end: p.endOfLastExpected()}
 }
+
+func (p *Parser) parseKeyValueExpr() *KeyValueExpr {
+	kv := &KeyValueExpr{}
+	kv.Key = p.parseIdentExpr()
+	p.expect(TokColon)
+	kv.Value = p.parseExpr()
+	return kv
+}
+
 func (p *Parser) parseSimpleExpr() Expr {
 	switch p.curTok {
 	case TokLBracket:

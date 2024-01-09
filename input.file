@@ -1,11 +1,40 @@
-extern fun int sum(int a, int b)
 
+struct Type {
+    int id
+    string typename
+}
+
+struct User {
+    string name
+    int age
+    string surname
+    Type[2] types
+}
+
+impl User* {
+
+    fun int a() {
+        return 0
+    }
+
+}
 
 
 # main function
 fun int main() {
-    var int[2] b = [55, 2]
-    printf_internal("hello world %d\n", b[1])
-    return 3
+    var User u1 = User{
+        name: "Niyazi",
+        age: 50,
+        surname: "Ekinci",
+        types: [Type{
+                              id: 100,
+                              typename: "2Aaaa"
+                          },Type{
+                                        id: 240,
+                                        typename: "5Aaaa"
+                                    }]
+    }
+    printf_internal("hello world %s\n", u1.types[1].typename)
+    return 0
 }
 
