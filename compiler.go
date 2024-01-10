@@ -183,10 +183,11 @@ func (c *Compiler) compileVarDef(stmt *VarDefStmt) {
 
 	if stmt.Init != nil {
 		right := c.compileExpr(stmt.Init)
-		if v, ok := right.(*constant.Null); ok {
-			cast := c.currentBlock.NewBitCast(v, typ)
+		switch right.Type().(type) {
+		case *types.PointerType:
+			cast := c.currentBlock.NewBitCast(right, typ)
 			c.currentBlock.NewStore(cast, ptr)
-		} else {
+		default:
 			c.currentBlock.NewStore(right, ptr)
 		}
 	}
@@ -467,10 +468,10 @@ func (c *Compiler) getIndexedType(load *ir.InstLoad, idx int) types.Type {
 func (c *Compiler) compileExpr(expr Expr) value.Value {
 	switch expr := expr.(type) {
 	case *NilExpr:
-		null := constant.NewNull(types.NewPointer(types.Void))
+		null := constant.NewNull(types.NewPointer(types.I8))
 		return null
 	case *ArrayLitExpr:
-		return c.newArray(expr, uint64(len(expr.Elems)), types.NewArray(2, c.resolveType(&IdentExpr{Name: "Type"})))
+		return c.newArray(expr, uint64(len(expr.Elems)), types.NewArray(2, c.resolveType(&IdentExpr{Name: "User"})))
 	case *BinaryExpr:
 		left := c.compileExpr(expr.Left)
 		right := c.compileExpr(expr.Right)

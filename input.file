@@ -8,7 +8,6 @@ struct User {
     string name
     int age
     string surname
-    Type[2] types
 }
 
 impl User* {
@@ -19,22 +18,12 @@ impl User* {
 
 }
 
-
 # main function
 fun int main() {
-    var User u1 = User{
-        name: "Niyazi",
-        age: 50,
-        surname: "Ekinci",
-        types: [Type{
-                              id: 100,
-                              typename: "2Aaaa"
-                          },Type{
-                                        id: 240,
-                                        typename: "5Aaaa"
-                                    }]
-    }
-    printf_internal("hello world %s\n", u1.types[1].typename)
+    return 5
+}
+
+fun int m2() {
     return 0
 }
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"github.com/llir/llvm/ir"
 	"log"
 	"os"
@@ -31,9 +32,13 @@ func main() {
 	file, err := os.ReadFile("./input.file")
 	parser := NewParser("./input.file")
 	//parser.printTokens()
-	pckg := parser.parse()
-	//	writer := NewASTWriter(io.Discard, pckg)
-	//	writer.start()
+	pckg, errors := parser.parse()
+	if errors != nil && len(errors) > 0 {
+		for _, err := range errors {
+			fmt.Print(err)
+		}
+		return
+	}
 
 	_ = file
 	if err != nil {

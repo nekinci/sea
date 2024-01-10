@@ -150,6 +150,7 @@ func (l *Lexer) tok() Token {
 		// TODO handle floating point numbers, negative numbers or e signed integers
 		for c >= '0' && c <= '9' {
 			l.pos++
+			l.col++
 			c = l.input[l.pos]
 		}
 		return TokNumber
@@ -172,29 +173,37 @@ func (l *Lexer) tok() Token {
 		return l.operatorToken()
 	case c == '{':
 		l.pos++
+		l.col++
 		return TokLBrace
 	case c == '}':
 		l.pos++
+		l.col++
 		return TokRBrace
 	case c == '(':
 		l.pos++
+		l.col++
 		return TokLParen
 	case c == ')':
 		l.pos++
+		l.col++
 		return TokRParen
 	case c == ',':
 		l.pos++
+		l.col++
 		return TokComma
 	case c == ';':
 		l.pos++
+		l.col++
 		return TokSemicolon
 	case c == ':':
 		l.pos++
+		l.col++
 		return TokColon
 	case unicode.IsLetter(rune(c)):
 
 		for l.pos < l.inputLen && (unicode.IsDigit(rune(l.input[l.pos])) || unicode.IsLetter(rune(l.input[l.pos])) || l.input[l.pos] == '_') {
 			l.pos += 1
+			l.col++
 		}
 
 		identifier := l.value()
@@ -236,82 +245,103 @@ func (l *Lexer) tok() Token {
 		// TODO . , e handle
 		for l.pos < l.inputLen && isDigit(l.input[l.pos]) {
 			l.pos += 1
+			l.col++
 		}
 		return TokNumber
 	case c == '"':
 		first := true
 		for l.pos < l.inputLen && (l.input[l.pos] != '"' || first) {
 			l.pos += 1
+			l.col++
 			first = false
 		}
 		l.pos++
+		l.col++
 		return TokString
 	case c == '=':
 		l.pos += 1
+		l.col++
 		if l.input[l.pos] == '=' {
 			l.pos += 1
+			l.col++
 			return TokEqual
 		}
 
 		return TokAssign
 	case c == '!':
 		l.pos++
+		l.col++
 		if l.input[l.pos] == '=' {
 			l.pos += 1
+			l.col++
 			return TokNEqual
 		}
 		return TokNot
 	case c == '&':
 		l.pos++
+		l.col++
 		if l.input[l.pos] == '&' {
 			l.pos += 1
+			l.col++
 			return TokAnd
 		}
 		return TokBAnd
 	case c == '|':
 		l.pos++
+		l.col++
 		if l.input[l.pos] == '|' {
 			l.pos += 1
+			l.col++
 			return TokOr
 		}
 		return TokBOr
 	case c == '^':
 		l.pos++
+		l.col++
 		return TokXor
 	case c == '<':
 		l.pos++
+		l.col++
 		if l.input[l.pos] == '=' {
 			l.pos += 1
+			l.col++
 			return TokLte
 		}
 
 		if l.input[l.pos] == '<' {
 			l.pos++
+			l.col++
 			return TokLShift
 		}
 
 		return TokLt
 	case c == '>':
 		l.pos++
+		l.col++
 		if l.input[l.pos] == '=' {
 			l.pos += 1
+			l.col++
 			return TokGte
 		}
 
 		if l.input[l.pos] == '>' {
 			l.pos++
+			l.col++
 			return TokRShift
 		}
 
 		return TokGt
 	case c == '[':
 		l.pos++
+		l.col++
 		return TokLBracket
 	case c == ']':
 		l.pos++
+		l.col++
 		return TokRBracket
 	case c == '.':
 		l.pos++
+		l.col++
 		return TokDot
 
 	}
