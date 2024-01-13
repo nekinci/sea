@@ -207,6 +207,8 @@ func (p *Parser) parseStmt() Stmt {
 		return p.parseIf()
 	case TokFor:
 		return p.parseFor()
+	case TokVar:
+		return p.parseVar()
 	default:
 		return p.parseExprStmt()
 	}

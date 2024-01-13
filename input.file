@@ -18,9 +18,19 @@ impl User* {
 
 }
 
+fun int foo(int a) {
+    return a
+}
+
 # main function
-fun int main() {
-    return 5
+fun int main(int arg) {
+    var User u = User{
+        name: "Niyazi",
+        age: 25,
+        surname: "Ekinci",
+    }
+    printf_internal("%d", u.age)
+    return 1 + 2 * 3
 }
 
 fun int m2() {

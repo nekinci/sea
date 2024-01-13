@@ -272,6 +272,7 @@ func (e *ImplStmt) Pos() (Pos, Pos) {
 func (e *ImplStmt) IsStmt() {}
 
 type DefStmt interface {
+	Stmt
 	IsDef()
 }
 

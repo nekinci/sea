@@ -23,7 +23,6 @@ func AssertErr(err error) {
 }
 
 func main() {
-
 	_ = os.Setenv("DEBUG", "")
 
 	compiler := &Compiler{}
@@ -34,6 +33,19 @@ func main() {
 	//parser.printTokens()
 	pckg, errors := parser.parse()
 	if errors != nil && len(errors) > 0 {
+		for _, err := range errors {
+			fmt.Print(err)
+		}
+		return
+	}
+
+	var checker *Checker = &Checker{
+		Package: pckg,
+		Errors:  make([]Error, 0),
+	}
+
+	errors, err2 := checker.Check()
+	if err2 {
 		for _, err := range errors {
 			fmt.Print(err)
 		}

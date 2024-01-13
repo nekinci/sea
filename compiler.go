@@ -10,14 +10,14 @@ import (
 	"os"
 )
 
-type Scope struct {
+type CompileScope struct {
 	variables map[string]value.Value
-	Parent    *Scope
-	Children  []*Scope
+	Parent    *CompileScope
+	Children  []*CompileScope
 	// TODO Shorthands map[string]value.Value // Like this.a -> just a if it is not defined in the scope
 }
 
-func (s *Scope) Lookup(name string) value.Value {
+func (s *CompileScope) Lookup(name string) value.Value {
 	if s.variables[name] != nil {
 		return s.variables[name]
 	}
@@ -29,7 +29,7 @@ func (s *Scope) Lookup(name string) value.Value {
 	panic("No variable found: " + name)
 }
 
-func (s *Scope) Define(name string, v value.Value) {
+func (s *CompileScope) Define(name string, v value.Value) {
 	if s.variables[name] != nil {
 		panic("Duplicate variable: " + name)
 	}
@@ -45,7 +45,7 @@ type fieldIndexKey struct {
 
 type Compiler struct {
 	module        *ir.Module
-	currentScope  *Scope
+	currentScope  *CompileScope
 	currentBlock  *ir.Block
 	breakBlock    *ir.Block
 	continueBlock *ir.Block
@@ -197,10 +197,10 @@ func (c *Compiler) compileFunc(def *FuncDefStmt, isMethod bool, thisType types.T
 	Assert(def.Name != nil, "type checker has to handle this")
 	Assert(def.Name.Name != "", "name can't be empty")
 	name := def.Name.Name
-	c.currentScope = &Scope{
+	c.currentScope = &CompileScope{
 		variables: make(map[string]value.Value),
 		Parent:    c.currentScope,
-		Children:  make([]*Scope, 0),
+		Children:  make([]*CompileScope, 0),
 	}
 	typ := c.resolveType(def.Type)
 
@@ -685,10 +685,10 @@ func generateOperation(block *ir.Block, value1, value2 value.Value, op Operation
 func (c *Compiler) init() {
 	Assert(c.module != nil, "module not initialized")
 
-	c.currentScope = &Scope{
+	c.currentScope = &CompileScope{
 		variables: make(map[string]value.Value),
 		Parent:    nil,
-		Children:  make([]*Scope, 0),
+		Children:  make([]*CompileScope, 0),
 	}
 
 	c.initBuiltinTypes()
