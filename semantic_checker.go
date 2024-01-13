@@ -9,6 +9,15 @@ const arrayScheme = "array<%s, %d>"
 const pointerScheme = "pointer<%s>"
 const unresolvedType = "<unresolved>"
 
+type Symbol interface {
+	IsSymbol()
+	Pos() (start Pos, end Pos)
+	IsVarDef() bool
+	IsTypeDef() bool
+	IsFuncDef() bool
+	TypeName() string
+}
+
 type TypeField struct {
 	Node       *Field
 	Name, Type string
@@ -28,10 +37,42 @@ type TypeDef struct {
 	Completed bool
 }
 
+func (t *TypeDef) TypeName() string {
+	return t.Name
+}
+
+func (t *TypeDef) IsSymbol() {}
+func (t *TypeDef) IsTypeDef() bool {
+	return true
+}
+func (t *TypeDef) IsVarDef() bool {
+	return false
+}
+
+func (t *TypeDef) IsFuncDef() bool {
+	return false
+}
+
+func (t *TypeDef) Pos() (Pos, Pos) {
+	if t.DefNode == nil {
+		return Pos{}, Pos{} // for built-in types
+	}
+	return t.DefNode.Pos()
+}
+
 type VarDef struct {
 	DefNode *VarDefStmt
 	Name    string
 	Type    string
+}
+
+func (v *VarDef) IsSymbol()       {}
+func (v *VarDef) IsVarDef() bool  { return true }
+func (v *VarDef) IsTypeDef() bool { return false }
+func (v *VarDef) IsFuncDef() bool { return false }
+func (v *VarDef) Pos() (Pos, Pos) { return v.DefNode.Pos() }
+func (v *VarDef) TypeName() string {
+	return v.Type
 }
 
 type FuncDef struct {
@@ -45,10 +86,23 @@ type FuncDef struct {
 	Completed bool
 }
 
+func (f *FuncDef) TypeName() string {
+	return f.Type
+}
+func (f *FuncDef) IsSymbol()       {}
+func (f *FuncDef) IsVarDef() bool  { return false }
+func (f *FuncDef) IsTypeDef() bool { return false }
+func (f *FuncDef) IsFuncDef() bool { return true }
+func (f *FuncDef) Pos() (Pos, Pos) {
+	if f.DefNode == nil {
+		return Pos{}, Pos{} // for built-in functions
+	}
+	return f.DefNode.Pos()
+
+}
+
 type Scope struct {
-	TypeDefs   map[string]*TypeDef
-	VarDefs    map[string]*VarDef
-	FuncDefs   map[string]*FuncDef
+	Symbols    map[string]Symbol
 	Parent     *Scope
 	Children   []*Scope
 	funcScopes map[string]*Scope
@@ -56,9 +110,7 @@ type Scope struct {
 
 func (c *Checker) EnterScope() *Scope {
 	newScope := &Scope{
-		TypeDefs:   make(map[string]*TypeDef),
-		VarDefs:    make(map[string]*VarDef),
-		FuncDefs:   make(map[string]*FuncDef),
+		Symbols:    make(map[string]Symbol),
 		funcScopes: make(map[string]*Scope),
 	}
 
@@ -76,6 +128,7 @@ func (c *Checker) enterTypeScope(name string) *Scope {
 		c.typeScopes[name] = c.EnterScope()
 	}
 
+	c.tmpScope = c.Scope
 	c.Scope = c.typeScopes[name]
 	return c.typeScopes[name]
 }
@@ -93,57 +146,9 @@ func (c *Checker) CloseScope() *Scope {
 	return c.Scope
 }
 
-func (scope *Scope) LookupFuncDef(name string) *FuncDef {
-	if f := scope.FuncDefs[name]; f != nil {
-		return f
-	}
-
-	if scope.Parent != nil {
-		return scope.Parent.LookupFuncDef(name)
-	}
-
-	return nil
-}
-
-func (scope *Scope) GetVariable(name string) *VarDef {
-	return scope.VarDefs[name]
-}
-
-func (scope *Scope) DefineVar(name string, typ string) *VarDef {
-	scope.VarDefs[name] = &VarDef{
-		DefNode: nil,
-		Name:    name,
-		Type:    typ,
-	}
-	return scope.VarDefs[name]
-}
-
-func (scope *Scope) LookupVariable(name string) *VarDef {
-	if v := scope.GetVariable(name); v != nil {
-		return v
-	}
-
-	if scope.Parent != nil {
-		return scope.Parent.LookupVariable(name)
-	}
-
-	return nil
-}
-
-func (scope *Scope) LookupTypeDef(name string) *TypeDef {
-	if def, ok := scope.TypeDefs[name]; ok {
-		return def
-	}
-
-	if scope.Parent != nil {
-		return scope.Parent.LookupTypeDef(name)
-	}
-
-	return nil
-}
-
 type Checker struct {
 	*Scope
+	tmpScope    *Scope
 	Package     *Package
 	Errors      []Error
 	currentFile string
@@ -151,11 +156,12 @@ type Checker struct {
 
 	// Context
 	expectedFuncType string
-	inCallExpr       bool
-	currentFuncSym   *FuncDef
-	currentTypeSym   *TypeDef
-	currentVarSym    *VarDef
+	currentSym       Symbol
 	//
+}
+
+func (c *Checker) turnTempScopeBack() {
+	c.Scope = c.tmpScope
 }
 
 func (c *Checker) Check() ([]Error, bool) {
@@ -169,23 +175,32 @@ func (c *Checker) Check() ([]Error, bool) {
 	return c.Errors, len(c.Errors) > 0
 }
 
+func (c *Checker) addSymbol(name string, sym Symbol) error {
+	if _, ok := c.Scope.Symbols[name]; ok {
+		return fmt.Errorf("duplicate symbol %s", name)
+	}
+	c.Scope.Symbols[name] = sym
+	return nil
+}
+
 func (c *Checker) initGlobalScope() {
-	c.TypeDefs["int"] = &TypeDef{
+	_ = c.addSymbol("int", &TypeDef{
 		DefNode:   nil,
 		Name:      "int",
 		Fields:    nil,
 		Methods:   nil,
 		Completed: true,
-	}
-	c.TypeDefs["string"] = &TypeDef{
+	})
+
+	_ = c.addSymbol("string", &TypeDef{
 		DefNode:   nil,
 		Name:      "string",
 		Fields:    nil,
 		Methods:   nil,
 		Completed: true,
-	}
+	})
 
-	c.FuncDefs["printf_internal"] = &FuncDef{
+	_ = c.addSymbol("printf_internal", &FuncDef{
 		DefNode: nil,
 		Name:    "printf_internal",
 		Type:    "int",
@@ -197,9 +212,9 @@ func (c *Checker) initGlobalScope() {
 		External:  true,
 		Variadic:  true,
 		Completed: false,
-	}
+	})
 
-	c.FuncDefs["scanf_internal"] = &FuncDef{
+	_ = c.addSymbol("scanf_internal", &FuncDef{
 		DefNode: nil,
 		Name:    "scanf_internal",
 		Type:    "int",
@@ -211,7 +226,40 @@ func (c *Checker) initGlobalScope() {
 		External:  true,
 		Variadic:  true,
 		Completed: false,
+	})
+}
+
+func (scope *Scope) LookupSym(name string) Symbol {
+	if sym, ok := scope.Symbols[name]; ok {
+		return sym
 	}
+
+	if scope.Parent != nil {
+		return scope.Parent.LookupSym(name)
+	}
+
+	return nil
+}
+
+func (scope *Scope) GetSymbol(name string) Symbol {
+	if sym, ok := scope.Symbols[name]; ok {
+		return sym
+	}
+
+	return nil
+}
+
+func (c *Checker) DefineVar(name string, typ string) {
+	if sym := c.LookupSym(name); sym != nil {
+		start, end := sym.Pos()
+		c.errorf(start, end, "re defined variable %s", name)
+	}
+
+	_ = c.addSymbol(name, &VarDef{
+		DefNode: nil,
+		Name:    name,
+		Type:    typ,
+	})
 }
 
 func (c *Checker) getNameOfType(expr Expr) string {
@@ -237,7 +285,9 @@ func (c *Checker) errorf(start, end Pos, format string, args ...interface{}) {
 func (c *Checker) checkStructDef(stmt *StructDefStmt) {
 	c.enterTypeScope(stmt.Name.Name)
 	defer c.CloseScope()
-	structDef := c.LookupTypeDef(stmt.Name.Name)
+	sym := c.LookupSym(stmt.Name.Name)
+	Assert(sym.IsTypeDef(), "Invalid definition of type")
+	structDef := sym.(*TypeDef)
 	Assert(structDef.DefNode == stmt, "Invalid definition of type")
 	defer func() {
 		structDef.Completed = true
@@ -255,14 +305,24 @@ func (c *Checker) checkStructDef(stmt *StructDefStmt) {
 			nameUsed[field.Name] = nameUsed[field.Name] + 1
 		} else {
 			nameUsed[field.Name] = 1
+			c.DefineVar(field.Name, field.Type)
 		}
 
-		if c.LookupTypeDef(field.Type) == nil {
+		fieldType := c.LookupSym(field.Type)
+
+		if fieldType == nil || !fieldType.IsTypeDef() {
 			start, end := field.Node.Type.Pos()
-			c.errorf(start, end, "Provided type %s is not implemented", field.Type)
+			c.errorf(start, end, "type %s is not defined", field.Type)
 		}
 
 	}
+}
+
+func (c *Checker) GetVariable(name string) Symbol {
+	if sym, ok := c.Scope.Symbols[name]; ok {
+		return sym
+	}
+	return nil
 }
 
 func (c *Checker) checkVarDef(stmt *VarDefStmt) {
@@ -270,16 +330,16 @@ func (c *Checker) checkVarDef(stmt *VarDefStmt) {
 	variable := c.GetVariable(stmt.Name.Name)
 	if variable != nil {
 		start, end := stmt.Name.Pos()
-		c.errorf(start, end, "re defined variable %s", stmt.Name.Name)
+		c.errorf(start, end, "redeclared symbol %s", stmt.Name.Name)
 		isErr = true
 	}
 
 	typName := c.getNameOfType(stmt.Type)
 
-	typDef := c.LookupTypeDef(typName)
-	if typDef == nil {
+	typSym := c.LookupSym(typName)
+	if typSym == nil || !typSym.IsTypeDef() {
 		start, end := stmt.Type.Pos()
-		c.errorf(start, end, "Type %s is not defined", typName)
+		c.errorf(start, end, "type %s is not defined", typName)
 		isErr = true
 	}
 
@@ -289,7 +349,7 @@ func (c *Checker) checkVarDef(stmt *VarDefStmt) {
 			return
 		}
 
-		if r != typName && typDef != nil {
+		if r != typName && typSym != nil {
 			start, end := stmt.Init.Pos()
 			c.errorf(start, end, "Expected type %s but got %s", typName, r)
 			isErr = true
@@ -304,7 +364,9 @@ func (c *Checker) checkVarDef(stmt *VarDefStmt) {
 func (c *Checker) checkFuncDef(stmt *FuncDefStmt) {
 	c.enterFuncScope(stmt.Name.Name)
 	defer c.CloseScope()
-	funcdef := c.LookupFuncDef(stmt.Name.Name)
+	sym := c.LookupSym(stmt.Name.Name)
+	Assert(sym.IsFuncDef(), "Invalid operation on symbol")
+	funcdef := sym.(*FuncDef)
 	defer func() {
 		funcdef.Completed = true
 	}()
@@ -313,7 +375,7 @@ func (c *Checker) checkFuncDef(stmt *FuncDefStmt) {
 		return
 	}
 
-	typ := c.LookupTypeDef(funcdef.Type)
+	typ := c.LookupSym(funcdef.Type).(*TypeDef)
 
 	if typ == nil {
 		start, end := funcdef.DefNode.Type.Pos()
@@ -330,7 +392,8 @@ func (c *Checker) checkFuncDef(stmt *FuncDefStmt) {
 			c.errorf(start, end, "re defined param %s", param.Name)
 		}
 
-		if c.LookupTypeDef(param.Type) == nil {
+		paramType := c.LookupSym(param.Type)
+		if paramType == nil || !paramType.IsTypeDef() {
 			start, end := param.Param.Type.Pos()
 			c.errorf(start, end, "Provided type %s is not defined", param.Type)
 		}
@@ -343,12 +406,48 @@ func (c *Checker) checkFuncDef(stmt *FuncDefStmt) {
 	c.checkBlockStmt(stmt.Body)
 }
 
+func (c *Checker) checkImplStmt(stmt *ImplStmt) {
+	ofType := c.getNameOfType(stmt.Type)
+	sym := c.LookupSym(ofType)
+	if sym == nil || !sym.IsTypeDef() {
+		start, end := stmt.Type.Pos()
+		c.errorf(start, end, "type %s is not defined", ofType)
+		return
+	}
+
+	typSym := sym.(*TypeDef)
+	stmt.RefOfType = typSym.DefNode
+	c.enterTypeScope(typSym.TypeName())
+	defer c.CloseScope()
+
+	for _, innerStmt := range stmt.Stmts {
+		switch innerStmt := innerStmt.(type) {
+		case *FuncDefStmt:
+			c.collectFuncSignature(innerStmt, typSym.TypeName())
+		default:
+			panic("Unreachable impl-block statement")
+		}
+	}
+
+	for _, innerStmt := range stmt.Stmts {
+		switch innerStmt := innerStmt.(type) {
+		case *FuncDefStmt:
+			c.checkFuncDef(innerStmt)
+		default:
+			panic("Unreachable impl-block statement")
+		}
+	}
+
+}
+
 func (c *Checker) checkStmt(stmt Stmt) {
 	switch stmt := stmt.(type) {
 	case *BlockStmt:
 		c.checkBlockStmt(stmt)
 	case *VarDefStmt:
 		c.checkVarDef(stmt)
+	case *ImplStmt:
+		c.checkImplStmt(stmt)
 	case *ExprStmt:
 		c.checkExprStmt(stmt)
 	case *ReturnStmt:
@@ -392,13 +491,13 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 		return fmt.Sprintf(arrayScheme, firstType, len(expr.Elems)), nil
 	case *ObjectLitExpr:
 		typ := c.getNameOfType(expr.Type)
-		lookupTyp := c.LookupTypeDef(typ)
-		if lookupTyp == nil {
+		lookupTyp := c.LookupSym(typ)
+		if lookupTyp == nil || !lookupTyp.IsTypeDef() {
 			start, end := expr.Type.Pos()
 			c.errorf(start, end, "provided type %s is not defined", typ)
 			return unresolvedType, fmt.Errorf("unknown type %s", typ)
 		}
-		return lookupTyp.Name, nil
+		return lookupTyp.(*TypeDef).Name, nil
 	case *BinaryExpr:
 		left, err := c.checkExpr(expr.Left)
 		if err != nil {
@@ -419,44 +518,38 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 
 		return left, nil
 	case *SelectorExpr:
-		// u.age2()
 		left, err := c.checkExpr(expr.Selector)
 		if err != nil {
 			return unresolvedType, err
 		}
 
+		typDef := c.LookupSym(left)
+		if typDef == nil || !typDef.IsTypeDef() {
+			start, end := expr.Selector.Pos()
+			c.errorf(start, end, "provided type %s is not defined", left)
+			return unresolvedType, fmt.Errorf("unknown type %s", left)
+		}
+
+		c.enterTypeScope(left)
+		defer c.turnTempScopeBack()
 		right, err := c.checkExpr(expr.Ident)
 		if err != nil {
 			return unresolvedType, err
 		}
 
-		_, _ = left, right
-
-		panic("unreachable")
+		return right, err
 
 	case *IdentExpr:
-
-		if c.inCallExpr {
-			def := c.LookupFuncDef(expr.Name)
-			c.currentFuncSym = def
-			if def == nil {
-				start, end := expr.Pos()
-				c.errorf(start, end, "function %s not found", expr.Name)
-				return unresolvedType, fmt.Errorf("function %s not found", expr.Name)
-			}
-
-			return c.LookupTypeDef(def.Type).Name, nil
-		}
-
-		variable := c.LookupVariable(expr.Name)
-		if variable == nil {
+		sym := c.LookupSym(expr.Name)
+		if sym == nil {
 			start, end := expr.Pos()
-			c.errorf(start, end, "variable %s not found", expr.Name)
-			return unresolvedType, fmt.Errorf("variable %s not found", expr.Name)
+			c.errorf(start, end, "symbol %s not found", expr.Name)
+			return unresolvedType, fmt.Errorf("symbol %s not found", expr.Name)
 		}
 
-		typedef := c.LookupTypeDef(variable.Type)
-		return typedef.Name, nil
+		c.currentSym = sym
+		typedef := c.LookupSym(sym.TypeName())
+		return typedef.TypeName(), nil
 	case *NilExpr:
 		return "pointer<nil>", nil
 	case *IndexExpr:
@@ -512,18 +605,19 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 			panic("unreachable")
 		}
 	case *CallExpr:
-		c.inCallExpr = true
 		l, err := c.checkExpr(expr.Left)
-		defer func() {
-			c.currentFuncSym = nil
-		}()
-		c.inCallExpr = false
 		if err != nil {
 			return unresolvedType, err
 		}
 
-		funcDef := c.currentFuncSym
+		if !c.currentSym.IsFuncDef() {
+			start, end := expr.Pos()
+			c.errorf(start, end, "symbol %s is not a function", l)
+			return unresolvedType, fmt.Errorf("symbol %s is not a function", l)
+		}
 
+		funcDef := c.currentSym.(*FuncDef)
+		expr.MethodOf = funcDef.MethodOf
 		if !funcDef.Variadic && len(funcDef.Params) != len(expr.Args) {
 			start, end := expr.Pos()
 			c.errorf(start, end, "expected %d arguments, got %d", len(funcDef.Params), len(expr.Args))
@@ -577,6 +671,8 @@ func (c *Checker) checkBlockStmt(stmt *BlockStmt) {
 func (c *Checker) check() {
 	for _, stmt := range c.Package.Stmts {
 		switch stmt := stmt.(type) {
+		case *ImplStmt:
+			c.checkImplStmt(stmt)
 		case *StructDefStmt:
 			c.checkStructDef(stmt)
 		case *VarDefStmt:
@@ -587,12 +683,46 @@ func (c *Checker) check() {
 	}
 }
 
+func (c *Checker) collectFuncSignature(stmt *FuncDefStmt, methodOf string) {
+	if _, ok := c.Symbols[stmt.Name.Name]; ok {
+		start, end := stmt.Pos()
+		c.errorf(start, end, "redeclared symbol %s", stmt.Name.Name)
+		return
+	}
+
+	funcDef := &FuncDef{
+		DefNode:  stmt,
+		Name:     stmt.Name.Name,
+		Type:     c.getNameOfType(stmt.Type),
+		External: stmt.IsExternal,
+		MethodOf: methodOf,
+	}
+
+	params := make([]Param, 0)
+	if methodOf != "" {
+		_ = c.addSymbol("this", &VarDef{
+			Name: "this",
+			Type: methodOf,
+		})
+	}
+
+	for _, param := range stmt.Params {
+		params = append(params, Param{
+			Name:  param.Name.Name,
+			Type:  c.getNameOfType(param.Type),
+			Param: param,
+		})
+	}
+	funcDef.Params = params
+	c.Symbols[stmt.Name.Name] = funcDef
+}
+
 func (c *Checker) collectSignatures() {
 	for _, stmt := range c.Package.Stmts {
 		switch stmt := stmt.(type) {
 		case *StructDefStmt:
 
-			if _, ok := c.TypeDefs[stmt.Name.Name]; ok {
+			if _, ok := c.Symbols[stmt.Name.Name]; ok {
 				panic("Not implemented")
 			}
 
@@ -612,38 +742,18 @@ func (c *Checker) collectSignatures() {
 				})
 			}
 
-			c.TypeDefs[stmt.Name.Name] = typeDef
+			c.Symbols[stmt.Name.Name] = typeDef
 		case *VarDefStmt:
-			if _, ok := c.VarDefs[stmt.Name.Name]; ok {
+			if _, ok := c.Symbols[stmt.Name.Name]; ok {
 				panic("Not implemented")
 			}
-			c.VarDefs[stmt.Name.Name] = &VarDef{
+			c.Symbols[stmt.Name.Name] = &VarDef{
 				DefNode: stmt,
 				Name:    stmt.Name.Name,
 				Type:    c.getNameOfType(stmt.Type),
 			}
 		case *FuncDefStmt:
-			if _, ok := c.FuncDefs[stmt.Name.Name]; ok {
-				panic("Not implemented")
-			}
-
-			funcDef := &FuncDef{
-				DefNode:  stmt,
-				Name:     stmt.Name.Name,
-				Type:     c.getNameOfType(stmt.Type),
-				External: stmt.IsExternal,
-			}
-
-			params := make([]Param, 0)
-			for _, param := range stmt.Params {
-				params = append(params, Param{
-					Name:  param.Name.Name,
-					Type:  c.getNameOfType(param.Type),
-					Param: param,
-				})
-			}
-			funcDef.Params = params
-			c.FuncDefs[stmt.Name.Name] = funcDef
+			c.collectFuncSignature(stmt, "")
 		}
 	}
 }

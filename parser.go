@@ -86,7 +86,7 @@ func (p *Parser) parse() (*Package, []Error) {
 }
 
 func (p *Parser) parseTypeIdentExpr() Expr {
-	expr := p.parseSelectorExpr(bracketType)
+	expr := p.parseSelectorExpr(bracketType, false)
 	if p.curTok == TokMultiply {
 		p.expect(TokMultiply)
 		return &RefTypeExpr{
@@ -414,7 +414,7 @@ func (p *Parser) parseIdentExpr() *IdentExpr {
 	return expr
 }
 
-func (p *Parser) parseSelectorExpr(lbracketMode bracketMode) Expr {
+func (p *Parser) parseSelectorExpr(lbracketMode bracketMode, enterBrace bool) Expr {
 
 	var expr Expr = p.parseIdentExpr()
 	// a.b.c.d
@@ -480,7 +480,7 @@ func (p *Parser) parseSelectorExpr(lbracketMode bracketMode) Expr {
 	}
 
 	// Is it fit in here?
-	if p.curTok == TokLBrace {
+	if enterBrace && p.curTok == TokLBrace {
 		p.expect(TokLBrace)
 		objLit := &ObjectLitExpr{
 			Type:  expr,
@@ -567,7 +567,7 @@ func (p *Parser) parseSimpleExpr() Expr {
 		p.expect(TokRParen)
 		return &ParenExpr{Expr: expr, start: start, end: p.endOfLastExpected()}
 	case TokIdentifier:
-		var identExpr = p.parseSelectorExpr(bracketIndex)
+		var identExpr = p.parseSelectorExpr(bracketIndex, true)
 		if p.curTok == TokAssign {
 			return p.parseAssignExpr(identExpr)
 		}
@@ -575,7 +575,7 @@ func (p *Parser) parseSimpleExpr() Expr {
 	case TokMultiply:
 		p.expect(TokMultiply)
 		var start = p.startOfLastExpected()
-		expr := p.parseSelectorExpr(bracketIndex)
+		expr := p.parseSelectorExpr(bracketIndex, true)
 		expr = &UnaryExpr{Op: Mul, Right: expr, start: start}
 		var right Expr
 		if p.curTok == TokAssign {

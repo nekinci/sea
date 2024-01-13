@@ -8,13 +8,24 @@ struct User {
     string name
     int age
     string surname
+    Type typ
 }
 
-impl User* {
+impl User {
 
-    fun int a() {
-        return 0
+   fun int b() {
+        return 1
     }
+
+    fun int a(int f) {
+        if f <= 0 {
+            return 1
+        }
+
+        return f * this.b() * this.a(f-1)
+    }
+
+
 
 }
 
@@ -28,8 +39,12 @@ fun int main(int arg) {
         name: "Niyazi",
         age: 25,
         surname: "Ekinci",
+        typ: Type{
+            id: 5,
+            typename: "Standart"
+        }
     }
-    printf_internal("%d", u.age)
+    printf_internal("%d", u.a(5))
     return 1 + 2 * 3
 }
 

@@ -112,9 +112,10 @@ func (e *BinaryExpr) Pos() (Pos, Pos) {
 func (e *BinaryExpr) IsExpr() {}
 
 type CallExpr struct {
-	Left Expr
-	Args []Expr
-	end  Pos
+	Left     Expr
+	Args     []Expr
+	end      Pos
+	MethodOf string
 }
 
 func (c *CallExpr) Pos() (Pos, Pos) {

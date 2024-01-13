@@ -14,6 +14,7 @@ type CompileScope struct {
 	variables map[string]value.Value
 	Parent    *CompileScope
 	Children  []*CompileScope
+	funcs     map[string]*ir.Func
 	// TODO Shorthands map[string]value.Value // Like this.a -> just a if it is not defined in the scope
 }
 
@@ -197,6 +198,9 @@ func (c *Compiler) compileFunc(def *FuncDefStmt, isMethod bool, thisType types.T
 	Assert(def.Name != nil, "type checker has to handle this")
 	Assert(def.Name.Name != "", "name can't be empty")
 	name := def.Name.Name
+	if isMethod {
+		name = fmt.Sprintf("%s.%s", def.ImplOf.Type.(*IdentExpr).Name, name)
+	}
 	c.currentScope = &CompileScope{
 		variables: make(map[string]value.Value),
 		Parent:    c.currentScope,
@@ -393,9 +397,24 @@ func (c *Compiler) getAlloca(name string) value.Value {
 func (c *Compiler) call(expr *CallExpr) value.Value {
 	b := c.currentBlock
 
-	fun := c.getFunc(expr.Left.(*IdentExpr).Name)
-
+	var funcName string
+	switch e := expr.Left.(type) {
+	case *IdentExpr:
+		funcName = e.Name
+	case *SelectorExpr:
+		funcName = e.Ident.(*IdentExpr).Name
+	default:
+		panic("TODO unreachable call")
+	}
 	args := make([]value.Value, 0)
+
+	if expr.MethodOf != "" {
+		funcName = expr.MethodOf + "." + funcName
+		args = append(args, c.getThisArg(expr.Left))
+	}
+
+	fun := c.getFunc(funcName)
+
 	for _, e := range expr.Args {
 		arg := c.compileExpr(e)
 		args = append(args, arg)
@@ -462,6 +481,20 @@ func (c *Compiler) getIndexedType(load *ir.InstLoad, idx int) types.Type {
 		return l.Fields[idx]
 	default:
 		panic("Unreachable indexed type")
+	}
+}
+
+func (c *Compiler) getThisArg(expr Expr) value.Value {
+	switch expr := expr.(type) {
+	case *SelectorExpr:
+		sel := c.compileExpr(expr.Selector)
+		selLoad, ok := sel.(*ir.InstLoad)
+		Assert(ok, "Selector invalid")
+		return selLoad
+	case *IdentExpr:
+		return c.compileExpr(expr)
+	default:
+		panic("Unreachable")
 	}
 }
 
