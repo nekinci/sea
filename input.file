@@ -11,44 +11,39 @@ struct User {
     Type typ
 }
 
+fun int f2() {
+    return 4
+}
+
 impl User {
 
-   fun int b() {
-        return 1
-    }
 
-    fun int a(int f) {
-        if f <= 0 {
-            return 1
-        }
+  fun int f2() {
+    return 21
+  }
 
-        return f * this.b() * this.a(f-1)
-    }
+
+  fun int a() {
+        return this.age
+  }
+
 
 
 
 }
 
-fun int foo(int a) {
-    return a
-}
 
 # main function
 fun int main(int arg) {
     var User u = User{
         name: "Niyazi",
-        age: 25,
+        age: 252,
         surname: "Ekinci",
         typ: Type{
             id: 5,
             typename: "Standart"
         }
     }
-    printf_internal("%d", u.a(5))
+    printf_internal("%d", u.a())
     return 1 + 2 * 3
 }
-
-fun int m2() {
-    return 0
-}
-

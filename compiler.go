@@ -72,6 +72,31 @@ func (c *Compiler) Lookup(name string) value.Value {
 func (c *Compiler) compile() {
 	Assert(c.pkg != nil, "pkg is nil")
 	Assert(c.module != nil, "module is nil")
+
+	for _, stmt := range c.pkg.Stmts {
+		switch stmt := stmt.(type) {
+		case *StructDefStmt:
+			c.compileStructDef(stmt)
+		}
+	}
+
+	for _, stmt := range c.pkg.Stmts {
+		switch stmt := stmt.(type) {
+		case *FuncDefStmt:
+			c.compileFunc(stmt, false, nil, true)
+		case *ImplStmt:
+			thisType := c.resolveType(stmt.Type)
+			for _, s := range stmt.Stmts {
+				switch implStmt := s.(type) {
+				case *FuncDefStmt:
+					implStmt.ImplOf = stmt
+					c.compileFunc(implStmt, true, thisType, true)
+				}
+			}
+
+		}
+	}
+
 	for _, stmt := range c.pkg.Stmts {
 		c.compileStmt(stmt)
 	}
@@ -194,18 +219,21 @@ func (c *Compiler) compileVarDef(stmt *VarDefStmt) {
 	}
 }
 
-func (c *Compiler) compileFunc(def *FuncDefStmt, isMethod bool, thisType types.Type) *ir.Func {
+func (c *Compiler) compileFunc(def *FuncDefStmt, isMethod bool, thisType types.Type, onlyDeclare bool) *ir.Func {
 	Assert(def.Name != nil, "type checker has to handle this")
 	Assert(def.Name.Name != "", "name can't be empty")
 	name := def.Name.Name
+
 	if isMethod {
 		name = fmt.Sprintf("%s.%s", def.ImplOf.Type.(*IdentExpr).Name, name)
 	}
+
 	c.currentScope = &CompileScope{
 		variables: make(map[string]value.Value),
 		Parent:    c.currentScope,
 		Children:  make([]*CompileScope, 0),
 	}
+	defer func() { c.currentScope = c.currentScope.Parent }()
 	typ := c.resolveType(def.Type)
 
 	params := make([]*ir.Param, 0)
@@ -225,15 +253,22 @@ func (c *Compiler) compileFunc(def *FuncDefStmt, isMethod bool, thisType types.T
 		// TODO merge with compileVarDef function
 		c.Define(def.Name.Name, param)
 	}
-	f := c.module.NewFunc(name, typ, params...)
-	c.funcs[name] = f
+	var f *ir.Func
+	if onlyDeclare {
+		f = c.module.NewFunc(name, typ, params...)
+		c.funcs[name] = f
+	} else {
+		f = c.funcs[name]
+	}
 	c.currentFunc = f
 	if !def.IsExternal {
-		block := f.NewBlock(entryBlock)
-		c.currentBlock = block
+		if !onlyDeclare {
+			block := f.NewBlock(entryBlock)
+			c.currentBlock = block
 
-		for _, innerStmt := range def.Body.Stmts {
-			c.compileStmt(innerStmt)
+			for _, innerStmt := range def.Body.Stmts {
+				c.compileStmt(innerStmt)
+			}
 		}
 	} else {
 		Assert(!isMethod, "Methods cannot be external")
@@ -244,6 +279,11 @@ func (c *Compiler) compileFunc(def *FuncDefStmt, isMethod bool, thisType types.T
 }
 
 func (c *Compiler) compileStructDef(def *StructDefStmt) {
+
+	if c.types[def.Name.Name] != nil {
+		return
+	}
+
 	str := types.NewStruct()
 	for i, field := range def.Fields {
 		typ := c.resolveType(field.Type)
@@ -271,7 +311,7 @@ func (c *Compiler) compileStmt(stmt Stmt) {
 	case *IfStmt:
 		c.compileIfStmt(innerStmt)
 	case *FuncDefStmt:
-		c.compileFunc(innerStmt, false, nil)
+		c.compileFunc(innerStmt, false, nil, false)
 	case *VarDefStmt:
 		c.compileVarDef(innerStmt)
 	case *ForStmt:
@@ -289,7 +329,7 @@ func (c *Compiler) compileStmt(stmt Stmt) {
 			switch implStmt := s.(type) {
 			case *FuncDefStmt:
 				implStmt.ImplOf = innerStmt // make sure the correct impl is used
-				c.compileFunc(implStmt, true, thisType)
+				c.compileFunc(implStmt, true, thisType, false)
 			}
 		}
 
@@ -397,18 +437,20 @@ func (c *Compiler) getAlloca(name string) value.Value {
 func (c *Compiler) call(expr *CallExpr) value.Value {
 	b := c.currentBlock
 
+	var isMethodCall bool
 	var funcName string
 	switch e := expr.Left.(type) {
 	case *IdentExpr:
 		funcName = e.Name
 	case *SelectorExpr:
+		isMethodCall = true
 		funcName = e.Ident.(*IdentExpr).Name
 	default:
 		panic("TODO unreachable call")
 	}
 	args := make([]value.Value, 0)
 
-	if expr.MethodOf != "" {
+	if expr.MethodOf != "" && isMethodCall {
 		funcName = expr.MethodOf + "." + funcName
 		args = append(args, c.getThisArg(expr.Left))
 	}
