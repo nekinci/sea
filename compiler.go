@@ -8,6 +8,7 @@ import (
 	"github.com/llir/llvm/ir/types"
 	"github.com/llir/llvm/ir/value"
 	"os"
+	"strings"
 )
 
 type CompileScope struct {
@@ -112,8 +113,15 @@ func (c *Compiler) initBuiltinTypes() {
 	}
 
 	c.types["void"] = types.Void
-	c.types["int"] = types.I32
+	c.types["i8"] = types.I8
+	c.types["i16"] = types.I16
+	c.types["i32"] = types.I32
+	c.types["i64"] = types.I64
 	c.types["bool"] = types.I1
+	c.types["char"] = types.I8
+	c.types["f16"] = types.Half
+	c.types["f32"] = types.Float
+	c.types["f64"] = types.Double
 
 	stringStruct := types.NewStruct(types.NewPointer(types.I8), types.I64)
 	def := c.module.NewTypeDef("string", stringStruct)
@@ -207,12 +215,21 @@ func (c *Compiler) compileVarDef(stmt *VarDefStmt) {
 	defer c.resetTempFields()
 	c.Define(stmt.Name.Name, ptr)
 
+	// For example in golang,
+	// var i i16 = 5 OK
+	// var i i16 = 6 + 5  OK
+	// var i i16 = d(i16) OK
+	// var i i16 = d(i32) NOK
+	// var i i16 = d(i32) + 5 NOK
+	// var i i16 = d(i32) + d(i32) NOK
 	if stmt.Init != nil {
 		right := c.compileExpr(stmt.Init)
 		switch right.Type().(type) {
 		case *types.PointerType:
 			cast := c.currentBlock.NewBitCast(right, typ)
 			c.currentBlock.NewStore(cast, ptr)
+		case *types.FloatType:
+			c.currentBlock.NewStore(right, ptr)
 		default:
 			c.currentBlock.NewStore(right, ptr)
 		}
@@ -455,14 +472,24 @@ func (c *Compiler) call(expr *CallExpr) value.Value {
 		args = append(args, c.getThisArg(expr.Left))
 	}
 
-	fun := c.getFunc(funcName)
+	if !expr.TypeCast {
+		fun := c.getFunc(funcName)
 
-	for _, e := range expr.Args {
-		arg := c.compileExpr(e)
-		args = append(args, arg)
+		for _, e := range expr.Args {
+			arg := c.compileExpr(e)
+			if _, ok := arg.Type().(*types.FloatType); ok {
+				arg = b.NewFPExt(arg, types.Double)
+			}
+			args = append(args, arg)
+		}
+
+		return b.NewCall(fun, args...)
+	} else {
+		toTyp := strings.Replace(funcName, "cast_", "", 1)
+		arg := c.compileExpr(expr.Args[0])
+		typ := c.resolveType(&IdentExpr{Name: toTyp})
+		return c.currentBlock.NewSExt(arg, typ)
 	}
-
-	return b.NewCall(fun, args...)
 }
 
 func (c *Compiler) resolveFieldIndex(name, typ string) (int, error) {
@@ -545,6 +572,8 @@ func (c *Compiler) compileExpr(expr Expr) value.Value {
 	case *NilExpr:
 		null := constant.NewNull(types.NewPointer(types.I8))
 		return null
+	case *CharExpr:
+		return constant.NewInt(types.I8, int64(expr.Unquoted))
 	case *ArrayLitExpr:
 		return c.newArray(expr, uint64(len(expr.Elems)), types.NewArray(2, c.resolveType(&IdentExpr{Name: "User"})))
 	case *BinaryExpr:
@@ -558,7 +587,19 @@ func (c *Compiler) compileExpr(expr Expr) value.Value {
 
 		return generateOperation(c.currentBlock, v, right, expr.Op)
 	case *NumberExpr:
-		return getI32Constant(expr.Value)
+		return constant.NewInt(types.NewInt(uint64(expr.BitSize)), expr.Value)
+	case *FloatExpr:
+		switch expr.BitSize {
+		case 16:
+			return constant.NewFloat(types.Half, expr.Value)
+		case 32:
+			return constant.NewFloat(types.Float, expr.Value)
+		case 64:
+			return constant.NewFloat(types.Double, expr.Value)
+		default:
+			panic("unhandled")
+
+		}
 	case *StringExpr:
 		v := expr.Unquoted
 		v2 := constant.NewCharArrayFromString(v)

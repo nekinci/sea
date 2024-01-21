@@ -1,49 +1,17 @@
 
-struct Type {
-    int id
-    string typename
+
+fun i8 f(i8 arg) {
+    return arg
 }
-
-struct User {
-    string name
-    int age
-    string surname
-    Type typ
-}
-
-fun int f2() {
-    return 4
-}
-
-impl User {
-
-
-  fun int f2() {
-    return 21
-  }
-
-
-  fun int a() {
-        return this.age
-  }
-
-
-
-
-}
-
 
 # main function
-fun int main(int arg) {
-    var User u = User{
-        name: "Niyazi",
-        age: 252,
-        surname: "Ekinci",
-        typ: Type{
-            id: 5,
-            typename: "Standart"
-        }
-    }
-    printf_internal("%d", u.a())
-    return 1 + 2 * 3
+fun i32 main(i32 arg) {
+    var f32 f32_example = 3.31
+    var i8 i8_example = 0
+    var i8 sum = 2 + 4 + 3 + 2 + 3
+    var i8 x = i8_example + sum + 5 +4444444444
+    var i32 ax = 1 + 32
+    var i16 res = cast_i16(f(x)) + 4 + 4
+    printf_internal("%d", res)
+    return 0
 }

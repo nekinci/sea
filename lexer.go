@@ -146,13 +146,31 @@ func (l *Lexer) tok() Token {
 	case isWhitespace(c):
 		l.skipWhitespace()
 		return l.tok()
-	case isDigit(c):
-		// TODO handle floating point numbers, negative numbers or e signed integers
+	case isDigit(c) || (c == '.' && l.pos+1 < l.inputLen && isDigit(l.input[l.pos+1])):
+
+		var isConsumedDot bool
+		if c == '.' {
+			l.pos++
+			l.col++
+			isConsumedDot = true
+		}
+
 		for c >= '0' && c <= '9' {
 			l.pos++
 			l.col++
 			c = l.input[l.pos]
+			if !isConsumedDot && c == '.' {
+				isConsumedDot = true
+				l.pos++
+				l.col++
+			}
+			c = l.input[l.pos]
 		}
+
+		if isConsumedDot {
+			return TokFloat
+		}
+
 		return TokNumber
 	case c == '+' || c == '-' || c == '*' || c == '/' || c == '%':
 		if c == '/' && l.inputLen > l.pos+1 && l.input[l.pos+1] == '*' {
@@ -258,6 +276,16 @@ func (l *Lexer) tok() Token {
 		l.pos++
 		l.col++
 		return TokString
+	case c == '\'':
+		l.pos++
+		l.col++
+		for l.pos < l.inputLen && l.input[l.pos] != '\'' {
+			l.pos++
+			l.col++
+		}
+		l.pos++
+		l.col++
+		return TokChar
 	case c == '=':
 		l.pos += 1
 		l.col++

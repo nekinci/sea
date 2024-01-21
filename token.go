@@ -16,6 +16,7 @@ const (
 	TokEqual         Token = "=="
 	TokIdentifier    Token = "<identifier>"
 	TokNumber        Token = "<number_literal>"
+	TokFloat         Token = "<float_literal>"
 	TokString        Token = "<string_literal>"
 	TokVar           Token = "var"
 	TokAssign        Token = "="
@@ -62,4 +63,5 @@ const (
 	TokDot           Token = "."
 	TokLBracket      Token = "["
 	TokRBracket      Token = "]"
+	TokChar          Token = "<char_literal>"
 )

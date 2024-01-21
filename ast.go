@@ -28,8 +28,21 @@ type Expr interface {
 
 type NumberExpr struct {
 	Value      int64
+	BitSize    int // Filled up from the type checker
 	start, end Pos
 }
+
+type FloatExpr struct {
+	Value      float64
+	BitSize    int // Filled up from the type checker
+	start, end Pos
+}
+
+func (f *FloatExpr) Pos() (Pos, Pos) {
+	return f.start, f.end
+}
+
+func (f *FloatExpr) IsExpr() {}
 
 func (n *NumberExpr) Pos() (start Pos, end Pos) {
 	start = n.start
@@ -59,6 +72,18 @@ func (s *StringExpr) Pos() (Pos, Pos) {
 }
 
 func (s *StringExpr) IsExpr() {}
+
+type CharExpr struct {
+	Value      string
+	Unquoted   rune
+	start, end Pos
+}
+
+func (c *CharExpr) Pos() (Pos, Pos) {
+	return c.start, c.end
+}
+
+func (c *CharExpr) IsExpr() {}
 
 func (n *NumberExpr) IsExpr() {}
 
@@ -116,6 +141,7 @@ type CallExpr struct {
 	Args     []Expr
 	end      Pos
 	MethodOf string
+	TypeCast bool
 }
 
 func (c *CallExpr) Pos() (Pos, Pos) {

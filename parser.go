@@ -512,6 +512,13 @@ func (p *Parser) parseNumberExpr() *NumberExpr {
 	return &NumberExpr{Value: v, start: p.startOfLastExpected(), end: p.endOfLastExpected()}
 }
 
+func (p *Parser) parseFloatExpr() *FloatExpr {
+	_, val := p.expect(TokFloat)
+	v, err := strconv.ParseFloat(val, 64)
+	Assert(err == nil, fmt.Sprintf("Invalid number: %v", err))
+	return &FloatExpr{Value: v, start: p.startOfLastExpected(), end: p.endOfLastExpected()}
+}
+
 func (p *Parser) parseKeyValueExpr() *KeyValueExpr {
 	kv := &KeyValueExpr{}
 	kv.Key = p.parseIdentExpr()
@@ -546,6 +553,10 @@ func (p *Parser) parseSimpleExpr() Expr {
 		// implicitly add end of string to unquoted string
 		unquotedStr += "\x00"
 		return &StringExpr{Value: str, Unquoted: unquotedStr, start: p.startOfLastExpected(), end: p.endOfLastExpected()}
+	case TokChar:
+		_, char := p.expect(TokChar)
+		value := rune(char[1])
+		return &CharExpr{Value: char, Unquoted: value, start: p.startOfLastExpected(), end: p.endOfLastExpected()}
 	case TokSizeof:
 		p.expect(TokSizeof)
 		var start = p.startOfLastExpected()
@@ -557,6 +568,8 @@ func (p *Parser) parseSimpleExpr() Expr {
 		return &UnaryExpr{Op: Sizeof, Right: &IdentExpr{Name: typ, start: identStart, end: identEnd}, start: start}
 	case TokNumber:
 		return p.parseNumberExpr()
+	case TokFloat:
+		return p.parseFloatExpr()
 	case TokTrue, TokFalse:
 		tok, _ := p.expectAnyOf(TokTrue, TokFalse)
 		return &BoolExpr{Value: tok == TokTrue, start: p.startOfLastExpected(), end: p.endOfLastExpected()}

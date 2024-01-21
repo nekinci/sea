@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -84,6 +85,7 @@ type FuncDef struct {
 	External  bool
 	Variadic  bool
 	Completed bool
+	TypeCast  bool
 }
 
 func (f *FuncDef) TypeName() string {
@@ -157,7 +159,35 @@ type Checker struct {
 	// Context
 	expectedFuncType string
 	currentSym       Symbol
+	expectedBitSize  []int
 	//
+}
+
+func (c *Checker) pushExpectedBitSize(i int) {
+	c.expectedBitSize = append(c.expectedBitSize, i)
+}
+
+func (c *Checker) popExpectedBitSize() int {
+	if len(c.expectedBitSize) == 0 {
+		panic("empty expectedBitSize")
+	}
+
+	i := c.expectedBitSize[len(c.expectedBitSize)-1]
+	c.expectedBitSize = c.expectedBitSize[:len(c.expectedBitSize)-1]
+	return i
+}
+
+func (c *Checker) topExpectedBitSize() int {
+	if len(c.expectedBitSize) == 0 {
+		panic("empty expectedBitSize")
+	}
+	return c.expectedBitSize[len(c.expectedBitSize)-1]
+}
+
+func (c *Checker) dupExpectedBitSize() int {
+	b := c.expectedBitSize[len(c.expectedBitSize)-1]
+	c.pushExpectedBitSize(b)
+	return b
 }
 
 func (c *Checker) turnTempScopeBack() {
@@ -183,27 +213,40 @@ func (c *Checker) addSymbol(name string, sym Symbol) error {
 	return nil
 }
 
-func (c *Checker) initGlobalScope() {
-	_ = c.addSymbol("int", &TypeDef{
-		DefNode:   nil,
-		Name:      "int",
-		Fields:    nil,
-		Methods:   nil,
-		Completed: true,
-	})
+func (c *Checker) addBuiltinTypes(names ...string) {
+	for _, name := range names {
+		_ = c.addSymbol(name, &TypeDef{
+			DefNode:   nil,
+			Name:      name,
+			Fields:    nil,
+			Methods:   nil,
+			Completed: true,
+		})
 
-	_ = c.addSymbol("string", &TypeDef{
-		DefNode:   nil,
-		Name:      "string",
-		Fields:    nil,
-		Methods:   nil,
-		Completed: true,
-	})
+		if name != "void" {
+			_ = c.addSymbol("cast_"+name, &FuncDef{
+				DefNode:   nil,
+				Name:      "cast_" + name,
+				Type:      name,
+				Params:    []Param{},
+				MethodOf:  "",
+				External:  false,
+				Variadic:  false,
+				Completed: true,
+				TypeCast:  true,
+			})
+		}
+	}
+}
+
+func (c *Checker) initGlobalScope() {
+
+	c.addBuiltinTypes("string", "char", "bool", "i64", "i32", "i16", "i8", "f16", "f32", "f64", "void")
 
 	_ = c.addSymbol("printf_internal", &FuncDef{
 		DefNode: nil,
 		Name:    "printf_internal",
-		Type:    "int",
+		Type:    "i32",
 		Params: []Param{{
 			Param: nil,
 			Name:  "fmt",
@@ -217,7 +260,7 @@ func (c *Checker) initGlobalScope() {
 	_ = c.addSymbol("scanf_internal", &FuncDef{
 		DefNode: nil,
 		Name:    "scanf_internal",
-		Type:    "int",
+		Type:    "i32",
 		Params: []Param{{
 			Param: nil,
 			Name:  "fmt",
@@ -325,6 +368,33 @@ func (c *Checker) GetVariable(name string) Symbol {
 	return nil
 }
 
+func checkTypeCompability(typ1, exprType string) bool {
+
+	if exprType == "float" {
+		return typ1 == "f32" || typ1 == "f64" || typ1 == "f16"
+	}
+
+	if exprType == "int" {
+		return typ1 == "i8" || typ1 == "i16" || typ1 == "i32" || typ1 == "i64"
+	}
+
+	return typ1 == exprType
+}
+
+func getBitSize(typName string) (int, error) {
+	if typName == "i32" || typName == "f32" {
+		return 32, nil
+	} else if typName == "i16" || typName == "f16" {
+		return 16, nil
+	} else if typName == "i8" {
+		return 8, nil
+	} else if typName == "f64" || typName == "i64" {
+		return 64, nil
+	}
+
+	return 0, fmt.Errorf("not a number")
+}
+
 func (c *Checker) checkVarDef(stmt *VarDefStmt) {
 	var isErr bool
 	variable := c.GetVariable(stmt.Name.Name)
@@ -337,6 +407,7 @@ func (c *Checker) checkVarDef(stmt *VarDefStmt) {
 	typName := c.getNameOfType(stmt.Type)
 
 	typSym := c.LookupSym(typName)
+	bitSize, err := getBitSize(typName)
 	if typSym == nil || !typSym.IsTypeDef() {
 		start, end := stmt.Type.Pos()
 		c.errorf(start, end, "type %s is not defined", typName)
@@ -344,12 +415,18 @@ func (c *Checker) checkVarDef(stmt *VarDefStmt) {
 	}
 
 	if stmt.Init != nil {
+		if err == nil {
+			c.pushExpectedBitSize(bitSize)
+		}
 		r, err := c.checkExpr(stmt.Init)
 		if err != nil {
 			return
 		}
 
-		if r != typName && typSym != nil {
+		if err == nil {
+			c.popExpectedBitSize()
+		}
+		if !checkTypeCompability(typName, r) && typSym != nil {
 			start, end := stmt.Init.Pos()
 			c.errorf(start, end, "Expected type %s but got %s", typName, r)
 			isErr = true
@@ -375,6 +452,8 @@ func (c *Checker) checkFuncDef(stmt *FuncDefStmt) {
 		return
 	}
 
+	bitSize, err := getBitSize(funcdef.Type)
+
 	typ := c.LookupSym(funcdef.Type).(*TypeDef)
 
 	if typ == nil {
@@ -382,6 +461,9 @@ func (c *Checker) checkFuncDef(stmt *FuncDefStmt) {
 		c.errorf(start, end, "Type %s is not defined", funcdef.Type)
 	} else {
 		c.expectedFuncType = typ.Name
+		if err == nil {
+			c.pushExpectedBitSize(bitSize)
+		}
 	}
 
 	for _, param := range funcdef.Params {
@@ -455,7 +537,7 @@ func (c *Checker) checkStmt(stmt Stmt) {
 		if err != nil {
 			return
 		}
-		if c.expectedFuncType != exprType {
+		if !checkTypeCompability(c.expectedFuncType, exprType) {
 			start, end := stmt.Value.Pos()
 			c.errorf(start, end, "expected %s, got %s", c.expectedFuncType, exprType)
 		}
@@ -463,13 +545,25 @@ func (c *Checker) checkStmt(stmt Stmt) {
 	}
 }
 
+func isNumber(t string) bool {
+	return t == "i8" || t == "i16" || t == "i32" || t == "i64" || t == "f16" || t == "f32" || t == "f64"
+}
+
 // checkExpr checks expr and returns its type and error if it exists
 func (c *Checker) checkExpr(expr Expr) (string, error) {
 	switch expr := expr.(type) {
 	case *NumberExpr:
-		return "int", nil
+		size := c.topExpectedBitSize()
+		expr.BitSize = size
+		return "i" + strconv.Itoa(size), nil
+	case *FloatExpr:
+		size := c.topExpectedBitSize()
+		expr.BitSize = size
+		return "f" + strconv.Itoa(size), nil
 	case *StringExpr:
 		return "string", nil
+	case *CharExpr:
+		return "char", nil
 	case *BoolExpr:
 		return "bool", nil
 	case *ArrayLitExpr:
@@ -482,7 +576,7 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 			if i == 0 {
 				firstType = elemType
 			} else {
-				if firstType != elemType {
+				if !checkTypeCompability(firstType, elemType) {
 					start, end := elem.Pos()
 					c.errorf(start, end, "expected %s, got %s", firstType, elemType)
 				}
@@ -499,6 +593,7 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 		}
 		return lookupTyp.(*TypeDef).Name, nil
 	case *BinaryExpr:
+		c.dupExpectedBitSize()
 		left, err := c.checkExpr(expr.Left)
 		if err != nil {
 			return left, err
@@ -509,6 +604,7 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 			return right, err
 		}
 
+		c.popExpectedBitSize()
 		// TODO compability cases
 		if left != right {
 			start, end := expr.Pos()
@@ -517,6 +613,7 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 		}
 
 		return left, nil
+
 	case *SelectorExpr:
 		left, err := c.checkExpr(expr.Selector)
 		if err != nil {
@@ -562,13 +659,13 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 				return unresolvedType, err
 			}
 
-			if right != "int" {
+			if right != "i32" {
 				start, end := expr.Pos()
 				c.errorf(start, end, "right operand must be int")
 				return unresolvedType, fmt.Errorf("right operand must be int")
 			}
 
-			return "int", nil
+			return "i32", nil
 		case Not:
 			right, err := c.checkExpr(expr.Right)
 			if err != nil {
@@ -606,6 +703,7 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 		}
 	case *CallExpr:
 		l, err := c.checkExpr(expr.Left)
+
 		if err != nil {
 			return unresolvedType, err
 		}
@@ -617,8 +715,9 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 		}
 
 		funcDef := c.currentSym.(*FuncDef)
+		expr.TypeCast = funcDef.TypeCast
 		expr.MethodOf = funcDef.MethodOf
-		if !funcDef.Variadic && len(funcDef.Params) != len(expr.Args) {
+		if !funcDef.Variadic && len(funcDef.Params) != len(expr.Args) && !funcDef.TypeCast {
 			start, end := expr.Pos()
 			c.errorf(start, end, "expected %d arguments, got %d", len(funcDef.Params), len(expr.Args))
 			err = fmt.Errorf("expected %d arguments, got %d", len(funcDef.Params), len(expr.Args))
@@ -629,27 +728,63 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 				err = fmt.Errorf("expected at least %d arguments, got %d", len(funcDef.Params), len(expr.Args))
 			}
 		}
+		if !funcDef.TypeCast {
+			for i, _ := range expr.Args {
 
-		for i, _ := range expr.Args {
-			t, err2 := c.checkExpr(expr.Args[i])
-			if err2 != nil {
-				continue
+				var err3 error
+				if i < len(funcDef.Params) {
+					var size int
+					size, err3 = getBitSize(funcDef.Params[i].Type)
+					if err3 == nil {
+						c.pushExpectedBitSize(size)
+					}
+				}
+
+				t, err2 := c.checkExpr(expr.Args[i])
+				if err2 != nil {
+					continue
+				}
+
+				if i >= len(funcDef.Params) {
+					break
+				}
+
+				arg := funcDef.Params[i]
+
+				if err == nil {
+					err = err2
+				}
+
+				if err3 == nil {
+					c.popExpectedBitSize()
+				}
+
+				if !checkTypeCompability(arg.Type, t) {
+					start, end := expr.Args[i].Pos()
+					c.errorf(start, end, "expected %s, got %s", arg.Type, t)
+					err = fmt.Errorf("expected %s, got %s", arg.Type, t)
+				}
+			}
+		} else {
+			if len(expr.Args) != 1 {
+				start, end := expr.Pos()
+				c.errorf(start, end, "expected 1 argument, got %d", len(expr.Args))
+				err = fmt.Errorf("expected 1 argument, got %d", len(expr.Args))
 			}
 
-			if i >= len(funcDef.Params) {
-				break
-			}
-			arg := funcDef.Params[i]
+			if len(expr.Args) > 0 {
+				t, err2 := c.checkExpr(expr.Args[0])
+				if err2 == nil {
+					funcType := funcDef.Type
+					if isNumber(funcType) && (!isNumber(t) && t != "char") {
+						start, end := expr.Args[0].Pos()
+						c.errorf(start, end, "expected %s, got %s", "<number_type>", t)
+					}
 
-			if err == nil {
-				err = err2
+				}
+
 			}
 
-			if t != arg.Type {
-				start, end := expr.Args[i].Pos()
-				c.errorf(start, end, "expected %s, got %s", arg.Type, t)
-				err = fmt.Errorf("expected %s, got %s", arg.Type, t)
-			}
 		}
 		return l, err
 	default:
