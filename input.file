@@ -11,7 +11,7 @@ fun i32 main(i32 arg) {
     var i8 sum = 2 + 4 + 3 + 2 + 3
     var i8 x = i8_example + sum + 5 +4444444444
     var i32 ax = 1 + 32
-    var i16 res = cast_i16(f(x)) + 4 + 4
+    var i32 res = cast_i32(f(x)) + 4 + 4
     printf_internal("%d", res)
     return 0
 }
