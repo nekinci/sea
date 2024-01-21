@@ -8,6 +8,7 @@ import (
 	"github.com/llir/llvm/ir/types"
 	"github.com/llir/llvm/ir/value"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -451,6 +452,66 @@ func (c *Compiler) getAlloca(name string) value.Value {
 	return v
 }
 
+func getFloatBit(t *types.FloatType) int64 {
+	switch t.Kind {
+	case types.FloatKindHalf:
+		return 16
+	case types.FloatKindFloat:
+		return 32
+	case types.FloatKindDouble:
+		return 64
+	default:
+		panic("unhandled")
+	}
+}
+
+func (c *Compiler) primitiveCasting(funcName string, expr *CallExpr) value.Value {
+	toTyp := strings.Replace(funcName, "cast_", "", 1)
+	arg := c.compileExpr(expr.Args[0])
+	typ := c.resolveType(&IdentExpr{Name: toTyp})
+
+	toBit := strings.Replace(strings.Replace(toTyp, "i", "", 1), "f", "", 1)
+	i, err := strconv.ParseInt(toBit, 10, 64)
+	AssertErr(err)
+
+	if strings.HasPrefix(toTyp, "i") {
+		switch t := arg.Type().(type) {
+		case *types.IntType:
+			if uint64(i) > t.BitSize {
+				return c.currentBlock.NewSExt(arg, typ)
+			} else if uint64(i) == t.BitSize {
+				return arg
+			} else {
+				return c.currentBlock.NewTrunc(arg, typ)
+			}
+		case *types.FloatType:
+			return c.currentBlock.NewFPToSI(arg, typ)
+
+		default:
+			panic("TODO")
+		}
+	} else if strings.HasPrefix(toTyp, "f") {
+		switch t := arg.Type().(type) {
+		case *types.IntType:
+			return c.currentBlock.NewSIToFP(arg, typ)
+		case *types.FloatType:
+			floatBit := getFloatBit(t)
+			if i > floatBit {
+				return c.currentBlock.NewFPExt(arg, typ)
+			} else if i == floatBit {
+				return arg
+			} else {
+				return c.currentBlock.NewFPTrunc(arg, typ)
+			}
+		default:
+			panic("TODO")
+		}
+	}
+
+	panic("not implemented yet")
+
+}
+
 func (c *Compiler) call(expr *CallExpr) value.Value {
 	b := c.currentBlock
 
@@ -477,18 +538,20 @@ func (c *Compiler) call(expr *CallExpr) value.Value {
 
 		for _, e := range expr.Args {
 			arg := c.compileExpr(e)
-			if _, ok := arg.Type().(*types.FloatType); ok {
-				arg = b.NewFPExt(arg, types.Double)
+			if funcName == "printf_internal" {
+				if t, ok := arg.Type().(*types.FloatType); ok {
+					if t.Kind != types.FloatKindDouble {
+						// think a way better
+						arg = b.NewFPExt(arg, types.Double)
+					}
+				}
 			}
 			args = append(args, arg)
 		}
 
 		return b.NewCall(fun, args...)
 	} else {
-		toTyp := strings.Replace(funcName, "cast_", "", 1)
-		arg := c.compileExpr(expr.Args[0])
-		typ := c.resolveType(&IdentExpr{Name: toTyp})
-		return c.currentBlock.NewSExt(arg, typ)
+		return c.primitiveCasting(funcName, expr)
 	}
 }
 
@@ -765,36 +828,71 @@ func getI32Constant(i int64) constant.Constant {
 
 func generateOperation(block *ir.Block, value1, value2 value.Value, op Operation) value.Value {
 	debug("operation value1 = %v, value2 = %v, OP = %s", value1, value2, op)
+	_, ok1 := value1.Type().(*types.FloatType)
+	_, ok2 := value2.Type().(*types.FloatType)
 	switch op {
 	case Add:
+		if ok1 || ok2 {
+			return block.NewFAdd(value1, value2)
+		}
 		return block.NewAdd(value1, value2)
 	case Sub:
+		if ok1 || ok2 {
+			return block.NewFSub(value1, value2)
+		}
 		return block.NewSub(value1, value2)
 	case Mul:
+		if ok1 || ok2 {
+			return block.NewFMul(value1, value2)
+		}
 		return block.NewMul(value1, value2)
 	case Div:
+		if ok1 || ok2 {
+			return block.NewFDiv(value1, value2)
+		}
 		return block.NewUDiv(value1, value2)
 	case Mod:
+		if ok1 || ok2 {
+			return block.NewFRem(value1, value2)
+		}
 		return block.NewURem(value1, value2)
 	case Eq:
+		if ok1 || ok2 {
+			return block.NewFCmp(enum.FPredOEQ, value1, value2)
+		}
 		return block.NewICmp(enum.IPredEQ, value1, value2)
 	case Neq:
+		if ok1 || ok2 {
+			return block.NewFCmp(enum.FPredONE, value1, value2)
+		}
 		return block.NewICmp(enum.IPredNE, value1, value2)
 	case Gt:
+		if ok1 || ok2 {
+			return block.NewFCmp(enum.FPredOGT, value1, value2)
+		}
 		return block.NewICmp(enum.IPredSGT, value1, value2)
 	case Gte:
+		if ok1 || ok2 {
+			return block.NewFCmp(enum.FPredOGE, value1, value2)
+		}
 		return block.NewICmp(enum.IPredSGE, value1, value2)
 	case Lt:
+		if ok1 || ok2 {
+			return block.NewFCmp(enum.FPredOLT, value1, value2)
+		}
 		return block.NewICmp(enum.IPredSLT, value1, value2)
 	case Lte:
+		if ok1 || ok2 {
+			return block.NewFCmp(enum.FPredOLE, value1, value2)
+		}
 		return block.NewICmp(enum.IPredSLE, value1, value2)
 	case And:
 		return block.NewAnd(value1, value2)
 	case Or:
 		return block.NewOr(value1, value2)
+	default:
+		panic("unhandled default case")
 	}
-
-	panic("unreachable")
 
 }
 
