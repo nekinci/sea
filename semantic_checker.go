@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -9,6 +10,7 @@ import (
 const arrayScheme = "array<%s, %d>"
 const pointerScheme = "pointer<%s>"
 const unresolvedType = "<unresolved>"
+const autoCastScheme = "auto_cast<%s>"
 
 type Symbol interface {
 	IsSymbol()
@@ -36,6 +38,7 @@ type TypeDef struct {
 	Fields    []TypeField
 	Methods   []any
 	Completed bool
+	IsStruct  bool
 }
 
 func (t *TypeDef) TypeName() string {
@@ -243,7 +246,7 @@ func (c *Checker) initGlobalScope() {
 
 	c.addBuiltinTypes("string", "char", "bool", "i64", "i32", "i16", "i8", "f16", "f32", "f64", "void")
 
-	_ = c.addSymbol("printf_internal", &FuncDef{
+	err := c.addSymbol("printf_internal", &FuncDef{
 		DefNode: nil,
 		Name:    "printf_internal",
 		Type:    "i32",
@@ -256,8 +259,8 @@ func (c *Checker) initGlobalScope() {
 		Variadic:  true,
 		Completed: false,
 	})
-
-	_ = c.addSymbol("scanf_internal", &FuncDef{
+	AssertErr(err)
+	err = c.addSymbol("scanf_internal", &FuncDef{
 		DefNode: nil,
 		Name:    "scanf_internal",
 		Type:    "i32",
@@ -270,6 +273,23 @@ func (c *Checker) initGlobalScope() {
 		Variadic:  true,
 		Completed: false,
 	})
+	AssertErr(err)
+
+	err = c.addSymbol("malloc_internal", &FuncDef{
+		DefNode: nil,
+		Name:    "malloc_internal",
+		Type:    "pointer<i8>",
+		Params: []Param{{
+			Param: nil,
+			Name:  "size",
+			Type:  "i64",
+		}},
+		External:  true,
+		Variadic:  false,
+		Completed: true,
+		TypeCast:  false,
+	})
+	AssertErr(err)
 }
 
 func (scope *Scope) LookupSym(name string) Symbol {
@@ -321,7 +341,7 @@ func (c *Checker) errorf(start, end Pos, format string, args ...interface{}) {
 		Start:   start,
 		End:     end,
 		Message: fmt.Sprintf(format, args...),
-		File:    "./input.file",
+		File:    "./input.sea",
 	})
 }
 
@@ -331,6 +351,7 @@ func (c *Checker) checkStructDef(stmt *StructDefStmt) {
 	sym := c.LookupSym(stmt.Name.Name)
 	Assert(sym.IsTypeDef(), "Invalid definition of type")
 	structDef := sym.(*TypeDef)
+	structDef.IsStruct = true
 	Assert(structDef.DefNode == stmt, "Invalid definition of type")
 	defer func() {
 		structDef.Completed = true
@@ -368,14 +389,17 @@ func (c *Checker) GetVariable(name string) Symbol {
 	return nil
 }
 
-func checkTypeCompability(typ1, exprType string) bool {
-
-	if exprType == "float" {
-		return typ1 == "f32" || typ1 == "f64" || typ1 == "f16"
+func (c *Checker) checkTypeCompatibility(typ1, exprType string) bool {
+	if strings.HasPrefix(exprType, "auto_cast<") {
+		n, _ := c.extractAutoCast(exprType)
+		if strings.HasPrefix(n, "pointer<") {
+			return true
+		}
+		panic("not implemented auto casting case")
 	}
 
-	if exprType == "int" {
-		return typ1 == "i8" || typ1 == "i16" || typ1 == "i32" || typ1 == "i64"
+	if exprType == "pointer<nil>" && strings.HasPrefix(typ1, "pointer<") {
+		return true
 	}
 
 	return typ1 == exprType
@@ -395,47 +419,66 @@ func getBitSize(typName string) (int, error) {
 	return 0, fmt.Errorf("not a number")
 }
 
+func (c *Checker) extractPointerType(name string) (string, error) {
+	if strings.HasPrefix(name, "pointer<") {
+		var s string
+		fmt.Sscanf(name, "pointer<%s>", &s)
+		s = strings.TrimSuffix(s, ">")
+		return s, nil
+	}
+
+	return "", fmt.Errorf("not a pointer")
+}
+
+func (c *Checker) extractAutoCast(name string) (string, error) {
+	if strings.HasPrefix(name, "auto_cast<") {
+		var s string
+		fmt.Sscanf(name, autoCastScheme, &s)
+
+		return s[:len(s)-1], nil
+	}
+	return "", fmt.Errorf("not a auto_cast type")
+}
+
 func (c *Checker) checkVarDef(stmt *VarDefStmt) {
-	var isErr bool
 	variable := c.GetVariable(stmt.Name.Name)
 	if variable != nil {
 		start, end := stmt.Name.Pos()
 		c.errorf(start, end, "redeclared symbol %s", stmt.Name.Name)
-		isErr = true
 	}
 
 	typName := c.getNameOfType(stmt.Type)
-
-	typSym := c.LookupSym(typName)
-	bitSize, err := getBitSize(typName)
+	var typ = typName
+	if t, err := c.extractPointerType(typName); err == nil {
+		typ = t
+	}
+	typSym := c.LookupSym(typ)
+	bitSize, err2 := getBitSize(typ)
 	if typSym == nil || !typSym.IsTypeDef() {
 		start, end := stmt.Type.Pos()
 		c.errorf(start, end, "type %s is not defined", typName)
-		isErr = true
 	}
 
 	if stmt.Init != nil {
-		if err == nil {
+		if err2 == nil {
 			c.pushExpectedBitSize(bitSize)
+			defer c.popExpectedBitSize()
 		}
+
 		r, err := c.checkExpr(stmt.Init)
 		if err != nil {
 			return
 		}
 
-		if err == nil {
-			c.popExpectedBitSize()
-		}
-		if !checkTypeCompability(typName, r) && typSym != nil {
+		if !c.checkTypeCompatibility(typName, r) && typSym != nil {
 			start, end := stmt.Init.Pos()
 			c.errorf(start, end, "Expected type %s but got %s", typName, r)
-			isErr = true
+		} else {
+			stmt.StoreAlloca = !typSym.(*TypeDef).IsStruct
 		}
 	}
 
-	if !isErr {
-		c.DefineVar(stmt.Name.Name, typName)
-	}
+	c.DefineVar(stmt.Name.Name, typName)
 }
 
 func (c *Checker) checkFuncDef(stmt *FuncDefStmt) {
@@ -537,7 +580,7 @@ func (c *Checker) checkStmt(stmt Stmt) {
 		if err != nil {
 			return
 		}
-		if !checkTypeCompability(c.expectedFuncType, exprType) {
+		if !c.checkTypeCompatibility(c.expectedFuncType, exprType) {
 			start, end := stmt.Value.Pos()
 			c.errorf(start, end, "expected %s, got %s", c.expectedFuncType, exprType)
 		}
@@ -576,7 +619,7 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 			if i == 0 {
 				firstType = elemType
 			} else {
-				if !checkTypeCompability(firstType, elemType) {
+				if !c.checkTypeCompatibility(firstType, elemType) {
 					start, end := elem.Pos()
 					c.errorf(start, end, "expected %s, got %s", firstType, elemType)
 				}
@@ -591,7 +634,56 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 			c.errorf(start, end, "provided type %s is not defined", typ)
 			return unresolvedType, fmt.Errorf("unknown type %s", typ)
 		}
-		return lookupTyp.(*TypeDef).Name, nil
+
+		def := lookupTyp.(*TypeDef)
+		typeOfKey := func(name string) (string, error) {
+			for _, field := range def.Fields {
+				if field.Name == name {
+					return field.Type, nil
+				}
+			}
+
+			return unresolvedType, fmt.Errorf("unknown key")
+		}
+
+		for _, kv := range expr.KeyValue {
+			k, ok := kv.Key.(*IdentExpr)
+
+			if !ok {
+				start, end := k.Pos()
+				c.errorf(start, end, "provided key must be ident")
+				continue
+			}
+			l, err := typeOfKey(k.Name)
+
+			if err != nil {
+				start, end := k.Pos()
+				c.errorf(start, end, err.Error())
+				continue
+			}
+
+			size, err2 := getBitSize(l)
+			if err2 == nil {
+				c.pushExpectedBitSize(size)
+			}
+
+			r, err := c.checkExpr(kv.Value)
+			if err != nil {
+				continue
+			}
+
+			if l != r {
+				start, end := kv.Pos()
+				c.errorf(start, end, "type mismatch (%s:%s)", l, r)
+			}
+
+			if err2 == nil {
+				c.popExpectedBitSize()
+			}
+
+		}
+
+		return def.Name, nil
 	case *BinaryExpr:
 		c.dupExpectedBitSize()
 		left, err := c.checkExpr(expr.Left)
@@ -620,14 +712,19 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 			return unresolvedType, err
 		}
 
-		typDef := c.LookupSym(left)
+		var ltyp = left
+		if n, err := c.extractPointerType(left); err == nil {
+			ltyp = n
+		}
+
+		typDef := c.LookupSym(ltyp)
 		if typDef == nil || !typDef.IsTypeDef() {
 			start, end := expr.Selector.Pos()
 			c.errorf(start, end, "provided type %s is not defined", left)
 			return unresolvedType, fmt.Errorf("unknown type %s", left)
 		}
 
-		c.enterTypeScope(left)
+		c.enterTypeScope(ltyp)
 		defer c.turnTempScopeBack()
 		right, err := c.checkExpr(expr.Ident)
 		if err != nil {
@@ -645,8 +742,21 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 		}
 
 		c.currentSym = sym
-		typedef := c.LookupSym(sym.TypeName())
-		return typedef.TypeName(), nil
+		n, err := c.extractPointerType(sym.TypeName())
+		var typedef Symbol
+		if err == nil {
+			typedef = c.LookupSym(n)
+		} else {
+			typedef = c.LookupSym(sym.TypeName())
+		}
+
+		if typedef == nil {
+			start, end := expr.Pos()
+			c.errorf(start, end, "type is not defined: %s", typedef.TypeName())
+			return unresolvedType, fmt.Errorf("type is not defined: %s", typedef.TypeName())
+		}
+
+		return sym.TypeName(), nil
 	case *NilExpr:
 		return "pointer<nil>", nil
 	case *IndexExpr:
@@ -690,17 +800,76 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 				return unresolvedType, fmt.Errorf("right operand must be pointer")
 			}
 
-			var r string
-			_, err = fmt.Sscanf(right, pointerScheme, &r)
+			r, err := c.extractPointerType(right)
 			AssertErr(err)
 			return r, nil
 		case Band:
-			panic("unhandled band")
+			right, err := c.checkExpr(expr.Right)
+			if err != nil {
+				return unresolvedType, err
+			}
+
+			sym := c.LookupSym(right)
+			if sym == nil || !sym.IsTypeDef() {
+				start, end := expr.Right.Pos()
+				c.errorf(start, end, "provided type is not valid: %s", right)
+				return unresolvedType, fmt.Errorf("provided type is not valid: %s", right)
+			}
+			return fmt.Sprintf(pointerScheme, right), nil
 		case Sizeof:
-			panic("unhandled sizeof")
+			switch r := expr.Right.(type) {
+			case *IdentExpr:
+				var typName = r.Name
+				n, err := c.extractPointerType(r.Name)
+				var sym Symbol
+				if err == nil {
+					typName = n
+					sym = c.LookupSym(n)
+				} else {
+					sym = c.LookupSym(r.Name)
+				}
+				if sym == nil || !sym.IsTypeDef() {
+					start, end := expr.Right.Pos()
+					c.errorf(start, end, "type is not found: %s", typName)
+					return unresolvedType, fmt.Errorf("type is not found: %s", typName)
+				}
+				return "i64", nil
+			default:
+				start, end := expr.Right.Pos()
+				c.errorf(start, end, "unexpected token, expected type identifier")
+				return unresolvedType, errors.New("unexpected token, expected type identifier")
+			}
 		default:
 			panic("unreachable")
 		}
+	case *AssignExpr:
+		l, err := c.checkExpr(expr.Left)
+
+		if err != nil {
+			return unresolvedType, err
+		}
+
+		size, err := getBitSize(l)
+		if err == nil {
+			c.pushExpectedBitSize(size)
+			defer func() {
+				c.popExpectedBitSize()
+			}()
+		}
+
+		r, err := c.checkExpr(expr.Right)
+		if err != nil {
+			return unresolvedType, err
+		}
+
+		if !c.checkTypeCompatibility(l, r) {
+			start, end := expr.Right.Pos()
+			c.errorf(start, end, "invalid assignment: expected %s, got %s", l, r)
+			return unresolvedType, fmt.Errorf("invalid assignment: expected %s, got: %s", l, r)
+		}
+
+		return l, nil
+
 	case *CallExpr:
 		l, err := c.checkExpr(expr.Left)
 
@@ -728,10 +897,12 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 				err = fmt.Errorf("expected at least %d arguments, got %d", len(funcDef.Params), len(expr.Args))
 			}
 		}
+
+		var isMalloc bool = funcDef.Name == "malloc_internal" && funcDef.MethodOf == ""
 		if !funcDef.TypeCast {
 			for i, _ := range expr.Args {
 
-				var err3 error
+				var err3 error = fmt.Errorf("empty error")
 				if i < len(funcDef.Params) {
 					var size int
 					size, err3 = getBitSize(funcDef.Params[i].Type)
@@ -745,47 +916,32 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 					continue
 				}
 
-				if i >= len(funcDef.Params) {
-					break
+				if err3 == nil {
+					c.popExpectedBitSize()
 				}
-
-				arg := funcDef.Params[i]
 
 				if err == nil {
 					err = err2
 				}
 
-				if err3 == nil {
-					c.popExpectedBitSize()
+				if i < len(funcDef.Params) {
+					arg := funcDef.Params[i]
+					if !c.checkTypeCompatibility(arg.Type, t) {
+						start, end := expr.Args[i].Pos()
+						c.errorf(start, end, "expected %s, got %s", arg.Type, t)
+						err = fmt.Errorf("expected %s, got %s", arg.Type, t)
+					}
 				}
 
-				if !checkTypeCompability(arg.Type, t) {
-					start, end := expr.Args[i].Pos()
-					c.errorf(start, end, "expected %s, got %s", arg.Type, t)
-					err = fmt.Errorf("expected %s, got %s", arg.Type, t)
-				}
 			}
 		} else {
-			if len(expr.Args) != 1 {
-				start, end := expr.Pos()
-				c.errorf(start, end, "expected 1 argument, got %d", len(expr.Args))
-				err = fmt.Errorf("expected 1 argument, got %d", len(expr.Args))
-			}
-
-			if len(expr.Args) > 0 {
-				t, err2 := c.checkExpr(expr.Args[0])
-				if err2 == nil {
-					funcType := funcDef.Type
-					if isNumber(funcType) && (!isNumber(t) && t != "char") {
-						start, end := expr.Args[0].Pos()
-						c.errorf(start, end, "expected %s, got %s", "<number_type>", t)
-					}
-
-				}
-
-			}
-
+			err = c.checkTypeCast(expr, funcDef)
 		}
+
+		if isMalloc {
+			return fmt.Sprintf(autoCastScheme, l), err
+		}
+
 		return l, err
 	default:
 		panic("unreachable")
@@ -793,6 +949,28 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 
 }
 
+func (c *Checker) checkTypeCast(expr *CallExpr, funcDef *FuncDef) (err error) {
+	if len(expr.Args) != 1 {
+		start, end := expr.Pos()
+		c.errorf(start, end, "expected 1 argument, got %d", len(expr.Args))
+		err = fmt.Errorf("expected 1 argument, got %d", len(expr.Args))
+	}
+
+	if len(expr.Args) > 0 {
+		t, err2 := c.checkExpr(expr.Args[0])
+		if err2 == nil {
+			funcType := funcDef.Type
+			if isNumber(funcType) && (!isNumber(t) && t != "char") {
+				start, end := expr.Args[0].Pos()
+				c.errorf(start, end, "expected %s, got %s", "<number_type>", t)
+				err = fmt.Errorf("expected %s, got %s", "<number_type>", t)
+			}
+
+		}
+	}
+
+	return err
+}
 func (c *Checker) checkExprStmt(stmt *ExprStmt) {
 	_, _ = c.checkExpr(stmt.Expr)
 }

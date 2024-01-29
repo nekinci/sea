@@ -383,10 +383,11 @@ func (c *ContinueStmt) Pos() (Pos, Pos) {
 func (c *ContinueStmt) IsStmt() {}
 
 type VarDefStmt struct {
-	Name  *IdentExpr
-	Type  Expr
-	Init  Expr
-	start Pos
+	Name        *IdentExpr
+	Type        Expr
+	Init        Expr
+	start       Pos
+	StoreAlloca bool
 }
 
 func (v *VarDefStmt) Pos() (Pos, Pos) {

@@ -206,6 +206,10 @@ func (c *Compiler) resetTempFields() {
 	c.currentType = nil
 }
 
+func (c *Compiler) isNull(r value.Value) bool {
+	_, ok := r.(*constant.Null)
+	return ok
+}
 func (c *Compiler) compileVarDef(stmt *VarDefStmt) {
 	Assert(c.currentScope != nil, "un-initialized scope")
 	Assert(c.currentBlock != nil, "currentBlock cannot be nil")
@@ -225,10 +229,24 @@ func (c *Compiler) compileVarDef(stmt *VarDefStmt) {
 	// var i i16 = d(i32) + d(i32) NOK
 	if stmt.Init != nil {
 		right := c.compileExpr(stmt.Init)
+
+		// that means it is not assignable and already assigned like structs
+		//if _, ok := right.(*ir.InstAlloca); ok {
+		//	return
+		//}
+
+		if !stmt.StoreAlloca {
+			return
+		}
+
 		switch right.Type().(type) {
 		case *types.PointerType:
-			cast := c.currentBlock.NewBitCast(right, typ)
-			c.currentBlock.NewStore(cast, ptr)
+			if !typ.Equal(right.Type()) || c.isNull(right) {
+				cast := c.currentBlock.NewBitCast(right, typ)
+				c.currentBlock.NewStore(cast, ptr)
+			} else {
+				c.currentBlock.NewStore(right, ptr)
+			}
 		case *types.FloatType:
 			c.currentBlock.NewStore(right, ptr)
 		default:
@@ -568,6 +586,16 @@ func sizeof(p types.Type) (int64 uint64) {
 	switch p := p.(type) {
 	case *types.IntType:
 		return p.BitSize / 8
+	case *types.FloatType:
+		return 8
+	case *types.PointerType:
+		return 8
+	case *types.StructType:
+		var s uint64 = 0
+		for _, field := range p.Fields {
+			s += sizeof(field)
+		}
+		return s
 	default:
 		panic("TODO unreachable sizeof")
 	}
@@ -591,9 +619,14 @@ func (c *Compiler) newArray(expr *ArrayLitExpr, size uint64, typ types.Type) *ir
 	return c.currentBlock.NewLoad(typ, alloc)
 }
 
-func (c *Compiler) newObject(expr *ObjectLitExpr, alloc *ir.InstAlloca) *ir.InstLoad {
+func (c *Compiler) newObject(expr *ObjectLitExpr, alloc *ir.InstAlloca) value.Value {
 	typ := c.resolveType(expr.Type)
 	c.resetTempFields()
+
+	var alloc2 value.Value = alloc
+	if _, ok := alloc.ElemType.(*types.PointerType); ok {
+		alloc2 = c.currentBlock.NewLoad(types.NewPointer(typ), alloc2)
+	}
 
 	for _, kv := range expr.KeyValue {
 		key, ok := kv.Key.(*IdentExpr)
@@ -601,10 +634,10 @@ func (c *Compiler) newObject(expr *ObjectLitExpr, alloc *ir.InstAlloca) *ir.Inst
 		fieldIndex, err := c.resolveFieldIndex(key.Name, typ.Name())
 		AssertErr(err)
 		v := c.compileExpr(kv.Value)
-		gep := c.currentBlock.NewGetElementPtr(typ, alloc, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, int64(fieldIndex)))
+		gep := c.currentBlock.NewGetElementPtr(typ, alloc2, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, int64(fieldIndex)))
 		c.currentBlock.NewStore(v, gep)
 	}
-	return c.currentBlock.NewLoad(typ, alloc)
+	return alloc
 }
 
 func (c *Compiler) getIndexedType(load *ir.InstLoad, idx int) types.Type {
@@ -627,6 +660,35 @@ func (c *Compiler) getThisArg(expr Expr) value.Value {
 		return c.compileExpr(expr)
 	default:
 		panic("Unreachable")
+	}
+}
+
+func (c *Compiler) mallocInternal(size uint64) value.Value {
+	callExpr := &CallExpr{
+		Left: &IdentExpr{Name: "malloc_internal"},
+		Args: []Expr{
+			&NumberExpr{
+				Value:   int64(size),
+				BitSize: 64,
+			},
+		},
+		end:      Pos{},
+		MethodOf: "",
+		TypeCast: false,
+	}
+
+	return c.call(callExpr)
+}
+
+func (c *Compiler) getSizeOf(expr Expr) uint64 {
+	switch expr := expr.(type) {
+	case *ObjectLitExpr:
+		return sizeof(c.resolveType(expr.Type))
+	case *IdentExpr:
+		val := c.Lookup(expr.Name)
+		return sizeof(val.Type())
+	default:
+		panic("TODO")
 	}
 }
 
@@ -704,8 +766,19 @@ func (c *Compiler) compileExpr(expr Expr) value.Value {
 			right := c.compileExpr(expr.Right)
 			return c.currentBlock.NewMul(constant.NewInt(types.I32, -1), right)
 		case Band:
-			val := c.compileExpr(expr.Right)
-			return val.(*ir.InstLoad).Src
+			switch e := expr.Right.(type) {
+			case *ObjectLitExpr:
+				size := c.getSizeOf(expr.Right)
+				allocation := c.mallocInternal(size)
+				x := c.currentBlock.NewBitCast(allocation, types.NewPointer(c.resolveType(expr.Right.(*ObjectLitExpr).Type)))
+				c.currentBlock.NewStore(x, c.currentAlloc)
+				val := c.compileExpr(expr.Right)
+				return val
+			case *IdentExpr:
+				return c.getAlloca(e.Name)
+			default:
+				panic("Unhandled assignment case")
+			}
 		case Sizeof:
 			// TODO constant expressions must, we handle as statically to save day for now
 			resolvedType := c.resolveType(expr.Right)
@@ -744,8 +817,15 @@ func (c *Compiler) compileExpr(expr Expr) value.Value {
 		sel := c.compileExpr(expr.Selector)
 		selLoad, ok := sel.(*ir.InstLoad)
 		Assert(ok, "Selector invalid")
+		if s, ok := selLoad.ElemType.(*types.PointerType); ok {
+			selLoad = c.currentBlock.NewLoad(s.ElemType, selLoad)
+		}
 		zero := constant.NewInt(types.I32, 0)
-		fieldIndex, err := c.resolveFieldIndex(expr.Ident.(*IdentExpr).Name, sel.Type().Name())
+		typName := sel.Type().Name()
+		if t, ok := sel.Type().(*types.PointerType); ok {
+			typName = t.ElemType.Name()
+		}
+		fieldIndex, err := c.resolveFieldIndex(expr.Ident.(*IdentExpr).Name, typName)
 		AssertErr(err)
 		idx := constant.NewInt(types.I32, int64(fieldIndex))
 		gep := c.currentBlock.NewGetElementPtr(selLoad.ElemType, selLoad.Src, zero, idx)

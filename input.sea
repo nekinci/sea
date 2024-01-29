@@ -1,0 +1,18 @@
+
+
+struct Car {
+    i32 max_speed
+    string brand
+}
+
+
+# main function
+fun i32 main(i32 arg) {
+    var Car* car = malloc_internal(sizeof(Car))
+    *car = Car{
+        max_speed: 33,
+        brand: "Audi"
+    }
+    printf_internal("%s %d \n", car.brand, car.max_speed)
+    return 0
+}

@@ -15,6 +15,7 @@ typedef struct {
 
 string make_string(const char* buffer) {
     size_t size = strlen(buffer);
+    printf("size: %zu of %s\n", size, buffer);
     string result;
     result.buffer = buffer;
     result.size = size;
@@ -70,4 +71,13 @@ int sum(int a, int b) {
 
 void r_runtime_exit(int status) {
     exit(status);
+}
+typedef struct {
+    double max_speed;
+    string s;
+} A;
+int main2() {
+    int f = 33;
+    int* a = &f;
+    return 0;
 }

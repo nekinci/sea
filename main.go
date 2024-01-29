@@ -28,8 +28,8 @@ func main() {
 	compiler := &Compiler{}
 
 	// read compileExpr from file
-	file, err := os.ReadFile("./input.file")
-	parser := NewParser("./input.file")
+	file, err := os.ReadFile("./input.sea")
+	parser := NewParser("./input.sea")
 	//parser.printTokens()
 	pckg, errors := parser.parse()
 	if errors != nil && len(errors) > 0 {
