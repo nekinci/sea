@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"github.com/llir/llvm/ir"
+	"github.com/llir/llvm/ir/constant"
+	"github.com/llir/llvm/ir/types"
 	"log"
 	"os"
 	"os/exec"
@@ -20,6 +22,22 @@ func AssertErr(err error) {
 	if err != nil {
 		panic(err.Error())
 	}
+}
+
+func main2() {
+	module := ir.NewModule()
+	newStruct := types.NewStruct(types.I32, types.I32)
+	typ := module.NewTypeDef("deneme", newStruct)
+	_ = typ
+	str := constant.NewStruct(newStruct)
+	str.Fields = append(str.Fields, constant.NewInt(types.I32, 3))
+	str.Fields = append(str.Fields, constant.NewInt(types.I32, 5))
+	f := module.NewFunc("main", types.I32)
+	block := f.NewBlock("entry")
+	alloca := block.NewAlloca(typ)
+	block.NewStore(str, alloca)
+	block.NewRet(constant.NewInt(types.I32, 0))
+	module.WriteTo(os.Stdout)
 }
 
 func main() {

@@ -449,8 +449,10 @@ func (c *Checker) checkVarDef(stmt *VarDefStmt) {
 
 	typName := c.getNameOfType(stmt.Type)
 	var typ = typName
+	var isPointer bool
 	if t, err := c.extractPointerType(typName); err == nil {
 		typ = t
+		isPointer = true
 	}
 	typSym := c.LookupSym(typ)
 	bitSize, err2 := getBitSize(typ)
@@ -473,8 +475,8 @@ func (c *Checker) checkVarDef(stmt *VarDefStmt) {
 		if !c.checkTypeCompatibility(typName, r) && typSym != nil {
 			start, end := stmt.Init.Pos()
 			c.errorf(start, end, "Expected type %s but got %s", typName, r)
-		} else {
-			stmt.StoreAlloca = !typSym.(*TypeDef).IsStruct
+		} else if typSym != nil {
+			stmt.StoreAlloca = !typSym.(*TypeDef).IsStruct || isPointer
 		}
 	}
 
@@ -752,8 +754,8 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 
 		if typedef == nil {
 			start, end := expr.Pos()
-			c.errorf(start, end, "type is not defined: %s", typedef.TypeName())
-			return unresolvedType, fmt.Errorf("type is not defined: %s", typedef.TypeName())
+			c.errorf(start, end, "type is not defined: %s", sym.TypeName())
+			return unresolvedType, fmt.Errorf("type is not defined: %s", sym.TypeName())
 		}
 
 		return sym.TypeName(), nil
@@ -852,9 +854,7 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 		size, err := getBitSize(l)
 		if err == nil {
 			c.pushExpectedBitSize(size)
-			defer func() {
-				c.popExpectedBitSize()
-			}()
+			defer c.popExpectedBitSize()
 		}
 
 		r, err := c.checkExpr(expr.Right)
@@ -866,6 +866,11 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 			start, end := expr.Right.Pos()
 			c.errorf(start, end, "invalid assignment: expected %s, got %s", l, r)
 			return unresolvedType, fmt.Errorf("invalid assignment: expected %s, got: %s", l, r)
+		} else {
+			sym := c.LookupSym(r)
+			if sym.IsTypeDef() && sym.(*TypeDef).IsStruct {
+				expr.StoreAlloca = true
+			}
 		}
 
 		return l, nil

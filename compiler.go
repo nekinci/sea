@@ -174,6 +174,10 @@ func (c *Compiler) initBuiltinFuncs() {
 	mallocInternal.Linkage = enum.LinkageExternal
 	c.funcs["malloc_internal"] = mallocInternal
 
+	memcpyInternal := module.NewFunc("memcpy_internal", types.NewPointer(types.I8), ir.NewParam("dest", types.NewPointer(types.I8)), ir.NewParam("src", types.NewPointer(types.I8)))
+	memcpyInternal.Linkage = enum.LinkageExternal
+	c.funcs["memcpy_internal"] = memcpyInternal
+
 }
 
 func (c *Compiler) resolveType(expr Expr) types.Type {
@@ -201,11 +205,6 @@ func (c *Compiler) defineType(expr Expr) types.Type {
 	panic("TODO")
 }
 
-func (c *Compiler) resetTempFields() {
-	c.currentAlloc = nil
-	c.currentType = nil
-}
-
 func (c *Compiler) isNull(r value.Value) bool {
 	_, ok := r.(*constant.Null)
 	return ok
@@ -217,7 +216,6 @@ func (c *Compiler) compileVarDef(stmt *VarDefStmt) {
 	c.currentType = typ
 	ptr := c.currentBlock.NewAlloca(typ)
 	c.currentAlloc = ptr
-	defer c.resetTempFields()
 	c.Define(stmt.Name.Name, ptr)
 
 	// For example in golang,
@@ -236,6 +234,8 @@ func (c *Compiler) compileVarDef(stmt *VarDefStmt) {
 		//}
 
 		if !stmt.StoreAlloca {
+			// do memcpy from returned alloca
+			c.memcpyInternal(ptr, right.(*ir.InstLoad).Src)
 			return
 		}
 
@@ -619,24 +619,45 @@ func (c *Compiler) newArray(expr *ArrayLitExpr, size uint64, typ types.Type) *ir
 	return c.currentBlock.NewLoad(typ, alloc)
 }
 
-func (c *Compiler) newObject(expr *ObjectLitExpr, alloc *ir.InstAlloca) value.Value {
-	typ := c.resolveType(expr.Type)
-	c.resetTempFields()
+func (c *Compiler) getDefaultValue(p types.Type) constant.Constant {
 
-	var alloc2 value.Value = alloc
-	if _, ok := alloc.ElemType.(*types.PointerType); ok {
-		alloc2 = c.currentBlock.NewLoad(types.NewPointer(typ), alloc2)
+	switch t := p.(type) {
+	case *types.IntType:
+		return constant.NewInt(t, 0)
+	case *types.FloatType:
+		return constant.NewFloat(t, 0)
+	case *types.PointerType:
+		return constant.NewNull(t)
+	case *types.StructType:
+		obj := constant.NewStruct(t)
+		var fields []constant.Constant
+		for _, f := range t.Fields {
+			fields = append(fields, c.getDefaultValue(f))
+		}
+		obj.Fields = fields
+		return obj
+	default:
+		panic("not implemented default value case!")
 	}
 
+	return nil
+}
+
+func (c *Compiler) newObject(expr *ObjectLitExpr) value.Value {
+	typ := c.resolveType(expr.Type)
+	t, ok := typ.(*types.StructType)
+	Assert(ok, "Object without struct type!")
+	alloc := c.currentBlock.NewAlloca(t)
 	for _, kv := range expr.KeyValue {
 		key, ok := kv.Key.(*IdentExpr)
 		Assert(ok, "Key must be a identifier")
 		fieldIndex, err := c.resolveFieldIndex(key.Name, typ.Name())
 		AssertErr(err)
 		v := c.compileExpr(kv.Value)
-		gep := c.currentBlock.NewGetElementPtr(typ, alloc2, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, int64(fieldIndex)))
+		gep := c.currentBlock.NewGetElementPtr(typ, alloc, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, int64(fieldIndex)))
 		c.currentBlock.NewStore(v, gep)
 	}
+
 	return alloc
 }
 
@@ -654,6 +675,10 @@ func (c *Compiler) getThisArg(expr Expr) value.Value {
 	case *SelectorExpr:
 		sel := c.compileExpr(expr.Selector)
 		selLoad, ok := sel.(*ir.InstLoad)
+		elemType := selLoad.Src.(*ir.InstAlloca).ElemType
+		if t, ok := elemType.(*types.PointerType); ok {
+			return c.currentBlock.NewLoad(t.ElemType, selLoad)
+		}
 		Assert(ok, "Selector invalid")
 		return selLoad
 	case *IdentExpr:
@@ -661,6 +686,13 @@ func (c *Compiler) getThisArg(expr Expr) value.Value {
 	default:
 		panic("Unreachable")
 	}
+}
+
+func (c *Compiler) memcpyInternal(dest, src value.Value) value.Value {
+	f := c.getFunc("memcpy_internal")
+	a1 := c.currentBlock.NewBitCast(dest, types.NewPointer(types.I8))
+	a2 := c.currentBlock.NewBitCast(src, types.NewPointer(types.I8))
+	return c.currentBlock.NewCall(f, a1, a2)
 }
 
 func (c *Compiler) mallocInternal(size uint64) value.Value {
@@ -736,11 +768,7 @@ func (c *Compiler) compileExpr(expr Expr) value.Value {
 		gep := constant.NewGetElementPtr(v2.Typ, strPtr, zero, zero)
 		return c.currentBlock.NewCall(c.getFunc("make_string"), gep)
 	case *ObjectLitExpr:
-		alloc := c.currentAlloc
-		if alloc == nil {
-			alloc = c.currentBlock.NewAlloca(c.resolveType(expr.Type))
-		}
-		return c.newObject(expr, alloc)
+		return c.newObject(expr)
 	case *CallExpr:
 		return c.call(expr)
 	case *IdentExpr:
@@ -801,7 +829,11 @@ func (c *Compiler) compileExpr(expr Expr) value.Value {
 		load, ok := left.(*ir.InstLoad)
 		Assert(ok, "assign_expr left operand is not loaded")
 		Assert(load.Src != nil, "assign_expr load.Src is nil")
-		c.currentBlock.NewStore(right, load.Src)
+		if !expr.StoreAlloca {
+			c.currentBlock.NewStore(right, load.Src)
+		} else {
+			c.memcpyInternal(load.Src, right)
+		}
 		return left
 	case *IndexExpr:
 		left := c.compileExpr(expr.Left)

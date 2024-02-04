@@ -77,6 +77,9 @@ func (p *Parser) parse() (*Package, []Error) {
 	p.module = pckg
 
 	p.next()
+	stmt := p.parsePackageStmt()
+	pckg.PackageStmt = stmt
+	pckg.Name = stmt.Name.Name
 	for p.curTok != EOF {
 		pckg.Stmts = append(pckg.Stmts, p.parseTopStmt())
 	}
@@ -610,9 +613,19 @@ func (p *Parser) parseSimpleExpr() Expr {
 	}
 }
 
+func (p *Parser) parsePackageStmt() *PackageStmt {
+	p.expect(TokPackage)
+	start := p.startOfLastExpected()
+	ident := p.parseIdentExpr()
+	return &PackageStmt{
+		Name:  ident,
+		start: start,
+	}
+}
+
 func (p *Parser) parseAssignExpr(identExpr Expr) *AssignExpr {
 	p.expect(TokAssign)
-	assignExpr := &AssignExpr{identExpr, p.parseExpr()}
+	assignExpr := &AssignExpr{identExpr, p.parseExpr(), false}
 	return assignExpr
 }
 

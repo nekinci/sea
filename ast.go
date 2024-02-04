@@ -11,8 +11,9 @@ type Node interface {
 }
 
 type Package struct {
-	Name  string
-	Stmts []Stmt
+	Name        string
+	Stmts       []Stmt
+	PackageStmt *PackageStmt
 }
 
 func (p *Package) Pos() (Pos, Pos) {
@@ -108,8 +109,9 @@ func (u *UnaryExpr) Pos() (Pos, Pos) {
 }
 
 type AssignExpr struct {
-	Left  Expr
-	Right Expr
+	Left        Expr
+	Right       Expr
+	StoreAlloca bool // TODO move to lookup table
 }
 
 func (a *AssignExpr) Pos() (Pos, Pos) {
@@ -417,6 +419,14 @@ func (s *StructDefStmt) Pos() (Pos, Pos) {
 func (s *StructDefStmt) IsDef() {}
 
 func (s *StructDefStmt) IsStmt() {}
+
+type PackageStmt struct {
+	Name  *IdentExpr
+	start Pos
+}
+
+func (p *PackageStmt) IsStmt()         {}
+func (p *PackageStmt) Pos() (Pos, Pos) { return p.start, p.Name.end }
 
 type ExprStmt struct {
 	Expr Expr

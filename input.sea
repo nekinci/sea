@@ -1,18 +1,40 @@
-
+package p
 
 struct Car {
-    i32 max_speed
+    f32 max_speed
     string brand
 }
+
+impl Car {
+
+    fun string getBrand() {
+        return this.brand
+    }
+
+
+    fun i32 getMaxSpeed() {
+        return cast_i32(this.max_speed)
+    }
+
+    fun i32 calculateSpeed(i32 a) {
+        return a + this.getMaxSpeed()
+    }
+
+}
+
 
 
 # main function
 fun i32 main(i32 arg) {
-    var Car* car = malloc_internal(sizeof(Car))
-    *car = Car{
-        max_speed: 33,
+    var Car* car = &Car{
+        max_speed: 5.3,
         brand: "Audi"
     }
-    printf_internal("%s %d \n", car.brand, car.max_speed)
+
+    var Car car2 = *car
+    car2.max_speed = car2.max_speed * 2.0
+
+    printf_internal("%d %d", car.calculateSpeed(4), car2.calculateSpeed(4))
+
     return 0
 }

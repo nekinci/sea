@@ -5,7 +5,28 @@ target triple = "arm64-apple-macosx14.0.0"
 
 %struct.string = type { ptr, i64 }
 
-@.str = private unnamed_addr constant [17 x i8] c"size: %zu of %s\0A\00", align 1
+; Function Attrs: noinline nounwind optnone ssp uwtable(sync)
+define ptr @memcpy_internal(ptr noundef %0, ptr noundef %1) #0 {
+  %3 = alloca ptr, align 8
+  %4 = alloca ptr, align 8
+  %5 = alloca i64, align 8
+  store ptr %0, ptr %3, align 8
+  store ptr %1, ptr %4, align 8
+  store i64 10, ptr %5, align 8
+  %6 = load ptr, ptr %3, align 8
+  %7 = load ptr, ptr %4, align 8
+  %8 = load i64, ptr %5, align 8
+  %9 = load ptr, ptr %3, align 8
+  %10 = call i64 @llvm.objectsize.i64.p0(ptr %9, i1 false, i1 true, i1 false)
+  %11 = call ptr @__memcpy_chk(ptr noundef %6, ptr noundef %7, i64 noundef %8, i64 noundef %10) #7
+  ret ptr %11
+}
+
+; Function Attrs: nounwind
+declare ptr @__memcpy_chk(ptr noundef, ptr noundef, i64 noundef, i64 noundef) #1
+
+; Function Attrs: nocallback nofree nosync nounwind readnone speculatable willreturn
+declare i64 @llvm.objectsize.i64.p0(ptr, i1 immarg, i1 immarg, i1 immarg) #2
 
 ; Function Attrs: noinline nounwind optnone ssp uwtable(sync)
 define [2 x i64] @make_string(ptr noundef %0) #0 {
@@ -16,22 +37,17 @@ define [2 x i64] @make_string(ptr noundef %0) #0 {
   %5 = load ptr, ptr %3, align 8
   %6 = call i64 @strlen(ptr noundef %5)
   store i64 %6, ptr %4, align 8
-  %7 = load i64, ptr %4, align 8
-  %8 = load ptr, ptr %3, align 8
-  %9 = call i32 (ptr, ...) @printf(ptr noundef @.str, i64 noundef %7, ptr noundef %8)
-  %10 = load ptr, ptr %3, align 8
-  %11 = getelementptr inbounds %struct.string, ptr %2, i32 0, i32 0
-  store ptr %10, ptr %11, align 8
-  %12 = load i64, ptr %4, align 8
-  %13 = getelementptr inbounds %struct.string, ptr %2, i32 0, i32 1
-  store i64 %12, ptr %13, align 8
-  %14 = load [2 x i64], ptr %2, align 8
-  ret [2 x i64] %14
+  %7 = load ptr, ptr %3, align 8
+  %8 = getelementptr inbounds %struct.string, ptr %2, i32 0, i32 0
+  store ptr %7, ptr %8, align 8
+  %9 = load i64, ptr %4, align 8
+  %10 = getelementptr inbounds %struct.string, ptr %2, i32 0, i32 1
+  store i64 %9, ptr %10, align 8
+  %11 = load [2 x i64], ptr %2, align 8
+  ret [2 x i64] %11
 }
 
-declare i64 @strlen(ptr noundef) #1
-
-declare i32 @printf(ptr noundef, ...) #1
+declare i64 @strlen(ptr noundef) #3
 
 ; Function Attrs: noinline nounwind optnone ssp uwtable(sync)
 define i32 @r_runtime_scanf(ptr noundef %0, ...) #0 {
@@ -50,12 +66,12 @@ define i32 @r_runtime_scanf(ptr noundef %0, ...) #0 {
 }
 
 ; Function Attrs: nocallback nofree nosync nounwind willreturn
-declare void @llvm.va_start(ptr) #2
+declare void @llvm.va_start(ptr) #4
 
-declare i32 @vscanf(ptr noundef, ptr noundef) #1
+declare i32 @vscanf(ptr noundef, ptr noundef) #3
 
 ; Function Attrs: nocallback nofree nosync nounwind willreturn
-declare void @llvm.va_end(ptr) #2
+declare void @llvm.va_end(ptr) #4
 
 ; Function Attrs: noinline nounwind optnone ssp uwtable(sync)
 define i32 @r_runtime_printf(ptr noundef %0, ...) #0 {
@@ -73,7 +89,7 @@ define i32 @r_runtime_printf(ptr noundef %0, ...) #0 {
   ret i32 %8
 }
 
-declare i32 @vprintf(ptr noundef, ptr noundef) #1
+declare i32 @vprintf(ptr noundef, ptr noundef) #3
 
 ; Function Attrs: noinline nounwind optnone ssp uwtable(sync)
 define i32 @printf_internal([2 x i64] %0, ...) #0 {
@@ -114,12 +130,12 @@ define ptr @malloc_internal(i64 noundef %0) #0 {
   %2 = alloca i64, align 8
   store i64 %0, ptr %2, align 8
   %3 = load i64, ptr %2, align 8
-  %4 = call ptr @malloc(i64 noundef %3) #5
+  %4 = call ptr @malloc(i64 noundef %3) #8
   ret ptr %4
 }
 
 ; Function Attrs: allocsize(0)
-declare ptr @malloc(i64 noundef) #3
+declare ptr @malloc(i64 noundef) #5
 
 ; Function Attrs: noinline nounwind optnone ssp uwtable(sync)
 define i64 @strlen_internal([2 x i64] %0) #0 {
@@ -147,29 +163,28 @@ define void @r_runtime_exit(i32 noundef %0) #0 {
   %2 = alloca i32, align 4
   store i32 %0, ptr %2, align 4
   %3 = load i32, ptr %2, align 4
-  call void @exit(i32 noundef %3) #6
+  call void @exit(i32 noundef %3) #9
   unreachable
 }
 
 ; Function Attrs: noreturn
-declare void @exit(i32 noundef) #4
+declare void @exit(i32 noundef) #6
 
 ; Function Attrs: noinline nounwind optnone ssp uwtable(sync)
 define i32 @main2() #0 {
-  %1 = alloca i32, align 4
-  %2 = alloca ptr, align 8
-  store i32 33, ptr %1, align 4
-  store ptr %1, ptr %2, align 8
   ret i32 0
 }
 
 attributes #0 = { noinline nounwind optnone ssp uwtable(sync) "frame-pointer"="non-leaf" "min-legal-vector-width"="0" "no-trapping-math"="true" "probe-stack"="__chkstk_darwin" "stack-protector-buffer-size"="8" "target-cpu"="apple-m1" "target-features"="+aes,+crc,+crypto,+dotprod,+fp-armv8,+fp16fml,+fullfp16,+lse,+neon,+ras,+rcpc,+rdm,+sha2,+sha3,+sm4,+v8.1a,+v8.2a,+v8.3a,+v8.4a,+v8.5a,+v8a,+zcm,+zcz" }
-attributes #1 = { "frame-pointer"="non-leaf" "no-trapping-math"="true" "probe-stack"="__chkstk_darwin" "stack-protector-buffer-size"="8" "target-cpu"="apple-m1" "target-features"="+aes,+crc,+crypto,+dotprod,+fp-armv8,+fp16fml,+fullfp16,+lse,+neon,+ras,+rcpc,+rdm,+sha2,+sha3,+sm4,+v8.1a,+v8.2a,+v8.3a,+v8.4a,+v8.5a,+v8a,+zcm,+zcz" }
-attributes #2 = { nocallback nofree nosync nounwind willreturn }
-attributes #3 = { allocsize(0) "frame-pointer"="non-leaf" "no-trapping-math"="true" "probe-stack"="__chkstk_darwin" "stack-protector-buffer-size"="8" "target-cpu"="apple-m1" "target-features"="+aes,+crc,+crypto,+dotprod,+fp-armv8,+fp16fml,+fullfp16,+lse,+neon,+ras,+rcpc,+rdm,+sha2,+sha3,+sm4,+v8.1a,+v8.2a,+v8.3a,+v8.4a,+v8.5a,+v8a,+zcm,+zcz" }
-attributes #4 = { noreturn "frame-pointer"="non-leaf" "no-trapping-math"="true" "probe-stack"="__chkstk_darwin" "stack-protector-buffer-size"="8" "target-cpu"="apple-m1" "target-features"="+aes,+crc,+crypto,+dotprod,+fp-armv8,+fp16fml,+fullfp16,+lse,+neon,+ras,+rcpc,+rdm,+sha2,+sha3,+sm4,+v8.1a,+v8.2a,+v8.3a,+v8.4a,+v8.5a,+v8a,+zcm,+zcz" }
-attributes #5 = { allocsize(0) }
-attributes #6 = { noreturn }
+attributes #1 = { nounwind "frame-pointer"="non-leaf" "no-trapping-math"="true" "probe-stack"="__chkstk_darwin" "stack-protector-buffer-size"="8" "target-cpu"="apple-m1" "target-features"="+aes,+crc,+crypto,+dotprod,+fp-armv8,+fp16fml,+fullfp16,+lse,+neon,+ras,+rcpc,+rdm,+sha2,+sha3,+sm4,+v8.1a,+v8.2a,+v8.3a,+v8.4a,+v8.5a,+v8a,+zcm,+zcz" }
+attributes #2 = { nocallback nofree nosync nounwind readnone speculatable willreturn }
+attributes #3 = { "frame-pointer"="non-leaf" "no-trapping-math"="true" "probe-stack"="__chkstk_darwin" "stack-protector-buffer-size"="8" "target-cpu"="apple-m1" "target-features"="+aes,+crc,+crypto,+dotprod,+fp-armv8,+fp16fml,+fullfp16,+lse,+neon,+ras,+rcpc,+rdm,+sha2,+sha3,+sm4,+v8.1a,+v8.2a,+v8.3a,+v8.4a,+v8.5a,+v8a,+zcm,+zcz" }
+attributes #4 = { nocallback nofree nosync nounwind willreturn }
+attributes #5 = { allocsize(0) "frame-pointer"="non-leaf" "no-trapping-math"="true" "probe-stack"="__chkstk_darwin" "stack-protector-buffer-size"="8" "target-cpu"="apple-m1" "target-features"="+aes,+crc,+crypto,+dotprod,+fp-armv8,+fp16fml,+fullfp16,+lse,+neon,+ras,+rcpc,+rdm,+sha2,+sha3,+sm4,+v8.1a,+v8.2a,+v8.3a,+v8.4a,+v8.5a,+v8a,+zcm,+zcz" }
+attributes #6 = { noreturn "frame-pointer"="non-leaf" "no-trapping-math"="true" "probe-stack"="__chkstk_darwin" "stack-protector-buffer-size"="8" "target-cpu"="apple-m1" "target-features"="+aes,+crc,+crypto,+dotprod,+fp-armv8,+fp16fml,+fullfp16,+lse,+neon,+ras,+rcpc,+rdm,+sha2,+sha3,+sm4,+v8.1a,+v8.2a,+v8.3a,+v8.4a,+v8.5a,+v8a,+zcm,+zcz" }
+attributes #7 = { nounwind }
+attributes #8 = { allocsize(0) }
+attributes #9 = { noreturn }
 
 !llvm.module.flags = !{!0, !1, !2, !3, !4}
 !llvm.ident = !{!5}
