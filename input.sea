@@ -7,6 +7,9 @@ struct Car {
 
 impl Car {
 
+    fun void setMaxSpeed(f32 max_speed) {
+        this.max_speed = max_speed
+    }
     fun string getBrand() {
         return this.brand
     }
@@ -32,7 +35,7 @@ fun i32 main(i32 arg) {
     }
 
     var Car car2 = *car
-    car2.max_speed = car2.max_speed * 2.0
+    car2.setMaxSpeed(1.0)
 
     printf_internal("%d %d", car.calculateSpeed(4), car2.calculateSpeed(4))
 

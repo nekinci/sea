@@ -313,7 +313,7 @@ func (scope *Scope) GetSymbol(name string) Symbol {
 }
 
 func (c *Checker) DefineVar(name string, typ string) {
-	if sym := c.LookupSym(name); sym != nil {
+	if sym := c.GetSymbol(name); sym != nil {
 		start, end := sym.Pos()
 		c.errorf(start, end, "re defined variable %s", name)
 	}
