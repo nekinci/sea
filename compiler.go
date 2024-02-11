@@ -235,7 +235,7 @@ func (c *Compiler) compileVarDef(stmt *VarDefStmt) {
 
 		if !stmt.StoreAlloca {
 			// do memcpy from returned alloca
-			c.memcpyInternal(ptr, right.(*ir.InstLoad).Src)
+			c.memcpyInternal(ptr, right)
 			return
 		}
 
@@ -275,7 +275,7 @@ func (c *Compiler) compileFunc(def *FuncDefStmt, isMethod bool, thisType types.T
 	params := make([]*ir.Param, 0)
 
 	if isMethod {
-		param := ir.NewParam("this", thisType)
+		param := ir.NewParam("this", types.NewPointer(thisType))
 		params = append(params, param)
 		c.Define("this", param)
 	}
@@ -305,6 +305,11 @@ func (c *Compiler) compileFunc(def *FuncDefStmt, isMethod bool, thisType types.T
 			for _, innerStmt := range def.Body.Stmts {
 				c.compileStmt(innerStmt)
 			}
+
+			if _, ok := typ.(*types.VoidType); ok && block.Term == nil {
+				block.NewRet(nil)
+			}
+
 		}
 	} else {
 		Assert(!isMethod, "Methods cannot be external")
@@ -321,13 +326,13 @@ func (c *Compiler) compileStructDef(def *StructDefStmt) {
 	}
 
 	str := types.NewStruct()
+	td := c.module.NewTypeDef(def.Name.Name, str)
+	c.types[def.Name.Name] = td
 	for i, field := range def.Fields {
 		typ := c.resolveType(field.Type)
 		str.Fields = append(str.Fields, typ)
 		c.typesIndexMap[fieldIndexKey{field.Name.Name, def.Name.Name}] = i
 	}
-	td := c.module.NewTypeDef(def.Name.Name, str)
-	c.types[def.Name.Name] = td
 }
 
 func (c *Compiler) compileStmt(stmt Stmt) {
@@ -643,19 +648,28 @@ func (c *Compiler) getDefaultValue(p types.Type) constant.Constant {
 	return nil
 }
 
-func (c *Compiler) newObject(expr *ObjectLitExpr) value.Value {
+func (c *Compiler) resolveFieldType(typ *types.StructType, index int64) types.Type {
+	return typ.Fields[index]
+}
+
+func (c *Compiler) newObject(expr *ObjectLitExpr, alloc value.Value) value.Value {
 	typ := c.resolveType(expr.Type)
 	t, ok := typ.(*types.StructType)
 	Assert(ok, "Object without struct type!")
-	alloc := c.currentBlock.NewAlloca(t)
 	for _, kv := range expr.KeyValue {
 		key, ok := kv.Key.(*IdentExpr)
 		Assert(ok, "Key must be a identifier")
 		fieldIndex, err := c.resolveFieldIndex(key.Name, typ.Name())
 		AssertErr(err)
 		v := c.compileExpr(kv.Value)
-		gep := c.currentBlock.NewGetElementPtr(typ, alloc, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, int64(fieldIndex)))
-		c.currentBlock.NewStore(v, gep)
+		if c.isNull(v) {
+			gep := c.currentBlock.NewGetElementPtr(typ, alloc, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, int64(fieldIndex)))
+			v2 := c.currentBlock.NewBitCast(v, c.resolveFieldType(t, int64(fieldIndex)))
+			c.currentBlock.NewStore(v2, gep)
+		} else {
+			gep := c.currentBlock.NewGetElementPtr(typ, alloc, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, int64(fieldIndex)))
+			c.currentBlock.NewStore(v, gep)
+		}
 	}
 
 	return alloc
@@ -674,13 +688,23 @@ func (c *Compiler) getThisArg(expr Expr) value.Value {
 	switch expr := expr.(type) {
 	case *SelectorExpr:
 		sel := c.compileExpr(expr.Selector)
-		selLoad, ok := sel.(*ir.InstLoad)
-		elemType := selLoad.Src.(*ir.InstAlloca).ElemType
-		if t, ok := elemType.(*types.PointerType); ok {
-			return c.currentBlock.NewLoad(t.ElemType, selLoad)
+		var elemType types.Type
+		var returnVal value.Value
+		switch s := sel.(type) {
+		case *ir.InstLoad:
+			elemType = s.Src.(*ir.InstAlloca).ElemType
+			returnVal = s
+		case *ir.InstCall:
+			elemType = s.Typ.(*types.PointerType).ElemType
+			returnVal = s
+		default:
+			panic("implement me getThisArg()")
 		}
-		Assert(ok, "Selector invalid")
-		return selLoad
+		_, ok2 := elemType.(*types.PointerType)
+		if ok2 {
+			return sel
+		}
+		return returnVal
 	case *IdentExpr:
 		return c.compileExpr(expr)
 	default:
@@ -768,7 +792,11 @@ func (c *Compiler) compileExpr(expr Expr) value.Value {
 		gep := constant.NewGetElementPtr(v2.Typ, strPtr, zero, zero)
 		return c.currentBlock.NewCall(c.getFunc("make_string"), gep)
 	case *ObjectLitExpr:
-		return c.newObject(expr)
+		typ := c.resolveType(expr.Type)
+		t, ok := typ.(*types.StructType)
+		Assert(ok, "Object without struct type!")
+		alloc := c.currentBlock.NewAlloca(t)
+		return c.newObject(expr, alloc)
 	case *CallExpr:
 		return c.call(expr)
 	case *IdentExpr:
@@ -798,9 +826,8 @@ func (c *Compiler) compileExpr(expr Expr) value.Value {
 			case *ObjectLitExpr:
 				size := c.getSizeOf(expr.Right)
 				allocation := c.mallocInternal(size)
-				x := c.currentBlock.NewBitCast(allocation, types.NewPointer(c.resolveType(expr.Right.(*ObjectLitExpr).Type)))
-				c.currentBlock.NewStore(x, c.currentAlloc)
-				val := c.compileExpr(expr.Right)
+				x := c.currentBlock.NewBitCast(allocation, types.NewPointer(c.resolveType(e.Type)))
+				val := c.newObject(e, x)
 				return val
 			case *IdentExpr:
 				return c.getAlloca(e.Name)
@@ -830,9 +857,9 @@ func (c *Compiler) compileExpr(expr Expr) value.Value {
 		Assert(ok, "assign_expr left operand is not loaded")
 		Assert(load.Src != nil, "assign_expr load.Src is nil")
 		if !expr.StoreAlloca {
-			c.currentBlock.NewStore(right, load.Src)
-		} else {
 			c.memcpyInternal(load.Src, right)
+		} else {
+			c.currentBlock.NewStore(right, load.Src)
 		}
 		return left
 	case *IndexExpr:

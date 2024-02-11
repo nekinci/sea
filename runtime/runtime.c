@@ -14,7 +14,7 @@ typedef struct {
 
 
 void* memcpy_internal(void* dest, const void* src) {
-    size_t s = sizeof(dest) + 2;
+    size_t s = sizeof(dest) * 2; // fixme
     return memcpy(dest, src, s);
 }
 
@@ -77,6 +77,31 @@ void r_runtime_exit(int status) {
     exit(status);
 }
 
+
+typedef struct x{
+    int value;
+    struct x* next;
+} node;
+
+
+void print_node(node* n) {
+    printf("%d \n", n -> value);
+    print_node(n -> next);
+}
+
+void add_next(node* n, int value) {
+    node* next = malloc(sizeof(node));
+    next -> value = value;
+    n -> next = next;
+}
+
 int main2() {
+
+    node* root = malloc(sizeof(node));
+    root -> value = 1;
+    root -> next = malloc(sizeof(node));
+    root -> next -> next = NULL;
+    root -> next -> value = 5;
+    print_node(root);
     return 0;
 }

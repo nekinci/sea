@@ -482,8 +482,9 @@ func (p *Parser) parseSelectorExpr(lbracketMode bracketMode, enterBrace bool) Ex
 		}
 	}
 
+	_, isCallExpr := expr.(*CallExpr)
 	// Is it fit in here?
-	if enterBrace && p.curTok == TokLBrace {
+	if enterBrace && p.curTok == TokLBrace && !isCallExpr {
 		p.expect(TokLBrace)
 		objLit := &ObjectLitExpr{
 			Type:  expr,
@@ -719,13 +720,13 @@ func (p *Parser) parseFunc() *FuncDefStmt {
 		IsExternal: isExternal,
 		start:      start,
 	}
-	_, identifier := p.expect(TokIdentifier)
-	funcDef.Type = &IdentExpr{Name: identifier}
-	tok, identifier := p.expect(TokIdentifier)
+	identifier := p.parseTypeIdentExpr()
+	funcDef.Type = identifier
+	tok, ident := p.expect(TokIdentifier)
 	if tok == TokUnexpected {
 		return nil
 	}
-	funcDef.Name = &IdentExpr{Name: identifier}
+	funcDef.Name = &IdentExpr{Name: ident}
 	funcDef.Params = p.parseParams()
 	if !isExternal {
 		funcDef.Body = p.parseBlock()

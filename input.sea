@@ -1,43 +1,59 @@
 package p
 
-struct Car {
-    f32 max_speed
-    string brand
+struct Node {
+    i32 value
+    Node* next
 }
 
-impl Car {
+impl Node {
 
-    fun void setMaxSpeed(f32 max_speed) {
-        this.max_speed = max_speed
-    }
-    fun string getBrand() {
-        return this.brand
+    fun i32 get_value() {
+        return this.value
     }
 
-
-    fun i32 getMaxSpeed() {
-        return cast_i32(this.max_speed)
+    fun Node* next_node() {
+        return this.next
     }
 
-    fun i32 calculateSpeed(i32 a) {
-        return a + this.getMaxSpeed()
+    fun bool has_next() {
+        return this.next != nil
+    }
+
+    fun Node* add_next(i32 value) {
+        this.next = &Node{
+            value: value,
+            next: nil
+        }
+        return this.next
     }
 
 }
 
+
+fun Node* new_node(i32 value) {
+    var Node* node = &Node{
+        value: value,
+        next: nil
+    }
+    return node
+}
+
+fun void print_values(Node* node, i32 depth) {
+
+     printf_internal("%d\n", node.value)
+     print_values(node.next, depth + 1)
+     return
+
+}
 
 
 # main function
 fun i32 main(i32 arg) {
-    var Car* car = &Car{
-        max_speed: 5.3,
-        brand: "Audi"
-    }
-
-    var Car car2 = *car
-    car2.setMaxSpeed(1.0)
-
-    printf_internal("%d %d", car.calculateSpeed(4), car2.calculateSpeed(4))
-
+    var Node* linked_list = new_node(1)
+    linked_list.add_next(2)
+        .add_next(3)
+        .add_next(4)
+        .add_next(5)
+    print_values(linked_list, 0)
     return 0
 }

@@ -1,4 +1,4 @@
-module myProgrammingLangFuckingEndProjectHope
+module sealang
 
 go 1.21
 

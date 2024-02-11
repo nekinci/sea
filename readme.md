@@ -11,7 +11,7 @@ Sea (pronounced as "C" :)) is a programming language that compiles to LLVM code.
   
     struct Type {
         i32 field_1 # 32-bit integer
-        f64 field_2 # 64-bit flot
+        f64 field_2 # 64-bit float
     }
     
     # define some methods to `Type*` type. These methods defined in  
