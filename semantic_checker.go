@@ -372,11 +372,21 @@ func (c *Checker) checkStructDef(stmt *StructDefStmt) {
 			c.DefineVar(field.Name, field.Type)
 		}
 
-		fieldType := c.LookupSym(field.Type)
+		var typ = field.Type
+		pointerType, err := c.extractPointerType(field.Type)
+		if err == nil {
+			typ = pointerType
+		}
+		fieldType := c.LookupSym(typ)
 
 		if fieldType == nil || !fieldType.IsTypeDef() {
 			start, end := field.Node.Type.Pos()
 			c.errorf(start, end, "type %s is not defined", field.Type)
+		}
+
+		if fieldType != nil && fieldType.TypeName() == stmt.Name.Name && err != nil {
+			start, end := stmt.Pos()
+			c.errorf(start, end, "invalid recursive type %s. you may consider change field type like this: %s*", stmt.Name.Name, stmt.Name.Name)
 		}
 
 	}
@@ -483,6 +493,14 @@ func (c *Checker) checkVarDef(stmt *VarDefStmt) {
 	c.DefineVar(stmt.Name.Name, typName)
 }
 
+func (c *Checker) extractOrGetType(name string) string {
+	pointerType, err := c.extractPointerType(name)
+	if err == nil {
+		return pointerType
+	}
+	return name
+}
+
 func (c *Checker) checkFuncDef(stmt *FuncDefStmt) {
 	c.enterFuncScope(stmt.Name.Name)
 	defer c.CloseScope()
@@ -499,13 +517,13 @@ func (c *Checker) checkFuncDef(stmt *FuncDefStmt) {
 
 	bitSize, err := getBitSize(funcdef.Type)
 
-	typ := c.LookupSym(funcdef.Type).(*TypeDef)
-
+	t := c.extractOrGetType(funcdef.Type)
+	typ := c.LookupSym(t).(*TypeDef)
 	if typ == nil {
 		start, end := funcdef.DefNode.Type.Pos()
 		c.errorf(start, end, "Type %s is not defined", funcdef.Type)
 	} else {
-		c.expectedFuncType = typ.Name
+		c.expectedFuncType = funcdef.Type
 		if err == nil {
 			c.pushExpectedBitSize(bitSize)
 		}
@@ -519,7 +537,7 @@ func (c *Checker) checkFuncDef(stmt *FuncDefStmt) {
 			c.errorf(start, end, "re defined param %s", param.Name)
 		}
 
-		paramType := c.LookupSym(param.Type)
+		paramType := c.LookupSym(c.extractOrGetType(param.Type))
 		if paramType == nil || !paramType.IsTypeDef() {
 			start, end := param.Param.Type.Pos()
 			c.errorf(start, end, "Provided type %s is not defined", param.Type)
@@ -578,14 +596,39 @@ func (c *Checker) checkStmt(stmt Stmt) {
 	case *ExprStmt:
 		c.checkExprStmt(stmt)
 	case *ReturnStmt:
-		exprType, err := c.checkExpr(stmt.Value)
-		if err != nil {
-			return
+		var exprType = "void"
+		if stmt.Value != nil {
+			var err error
+			exprType, err = c.checkExpr(stmt.Value)
+			if err != nil {
+				return
+			}
 		}
 		if !c.checkTypeCompatibility(c.expectedFuncType, exprType) {
 			start, end := stmt.Value.Pos()
 			c.errorf(start, end, "expected %s, got %s", c.expectedFuncType, exprType)
 		}
+	case *IfStmt:
+		l, err := c.checkExpr(stmt.Cond)
+		if err != nil {
+			return
+		}
+		if l != "bool" {
+			start, end := stmt.Cond.Pos()
+			c.errorf(start, end, "condition type is invalid, expected: %s, got: %s", "bool", l)
+		}
+
+		c.checkStmt(stmt.Then)
+		if stmt.Else != nil {
+			c.checkStmt(stmt.Else)
+		}
+
+	case *ForStmt:
+		// TODO
+		// Assert(false, "implement me")
+
+	default:
+		panic("Unhandled")
 
 	}
 }
@@ -674,7 +717,7 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 				continue
 			}
 
-			if l != r {
+			if !c.checkTypeCompatibility(l, r) {
 				start, end := kv.Pos()
 				c.errorf(start, end, "type mismatch (%s:%s)", l, r)
 			}
@@ -700,6 +743,14 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 
 		c.popExpectedBitSize()
 		// TODO compability cases
+
+		switch expr.Op {
+		case Add, Sub, Mul, Div, Mod:
+		case Band:
+		case Eq, Neq, Lt, Lte, Gt, Gte, Not, And, Or:
+			return "bool", nil
+		}
+
 		if left != right {
 			start, end := expr.Pos()
 			c.errorf(start, end, "types are not compatible %s, %s", left, right)
@@ -867,7 +918,7 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 			c.errorf(start, end, "invalid assignment: expected %s, got %s", l, r)
 			return unresolvedType, fmt.Errorf("invalid assignment: expected %s, got: %s", l, r)
 		} else {
-			sym := c.LookupSym(r)
+			sym := c.LookupSym(c.extractOrGetType(r))
 			if sym.IsTypeDef() && sym.(*TypeDef).IsStruct {
 				expr.StoreAlloca = true
 			}
