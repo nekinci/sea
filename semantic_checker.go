@@ -331,6 +331,9 @@ func (c *Checker) getNameOfType(expr Expr) string {
 		return expr.Name
 	case *RefTypeExpr:
 		return fmt.Sprintf(pointerScheme, c.getNameOfType(expr.Expr))
+	case *ArrayTypeExpr:
+		// TODO calculate size of array
+		return fmt.Sprintf(arrayScheme, c.getNameOfType(expr.Type), -1)
 	default:
 		panic("unreachable")
 	}
@@ -343,6 +346,10 @@ func (c *Checker) errorf(start, end Pos, format string, args ...interface{}) {
 		Message: fmt.Sprintf(format, args...),
 		File:    "./input.sea",
 	})
+}
+
+func (c *Checker) isPointer(name string) bool {
+	return strings.HasPrefix(name, "pointer<")
 }
 
 func (c *Checker) checkStructDef(stmt *StructDefStmt) {
@@ -372,11 +379,7 @@ func (c *Checker) checkStructDef(stmt *StructDefStmt) {
 			c.DefineVar(field.Name, field.Type)
 		}
 
-		var typ = field.Type
-		pointerType, err := c.extractPointerType(field.Type)
-		if err == nil {
-			typ = pointerType
-		}
+		typ := c.extractBaseType(field.Type)
 		fieldType := c.LookupSym(typ)
 
 		if fieldType == nil || !fieldType.IsTypeDef() {
@@ -384,7 +387,7 @@ func (c *Checker) checkStructDef(stmt *StructDefStmt) {
 			c.errorf(start, end, "type %s is not defined", field.Type)
 		}
 
-		if fieldType != nil && fieldType.TypeName() == stmt.Name.Name && err != nil {
+		if fieldType != nil && fieldType.TypeName() == stmt.Name.Name && !c.isPointer(field.Type) {
 			start, end := stmt.Pos()
 			c.errorf(start, end, "invalid recursive type %s. you may consider change field type like this: %s*", stmt.Name.Name, stmt.Name.Name)
 		}
@@ -399,16 +402,39 @@ func (c *Checker) GetVariable(name string) Symbol {
 	return nil
 }
 
+// extractType extracts wrapped type only once
+func (c *Checker) extractType(name string) string {
+	if strings.HasPrefix(name, "auto_cast<") {
+		var s string
+		fmt.Sscanf(name, autoCastScheme, &s)
+		s = strings.TrimSuffix(s, ">")
+		return s
+	} else if strings.HasPrefix(name, "pointer<") {
+		var s string
+		fmt.Sscanf(name, pointerScheme, &s)
+		s = strings.TrimSuffix(s, ">")
+		return s
+	} else if strings.HasPrefix(name, "array<") {
+		var s string
+		fmt.Sscanf(name, arrayScheme, &s)
+		s = strings.TrimSuffix(s, ">")
+		s = strings.TrimSuffix(s, ",")
+		return s
+	}
+
+	return name
+}
+
 func (c *Checker) checkTypeCompatibility(typ1, exprType string) bool {
 	if strings.HasPrefix(exprType, "auto_cast<") {
-		n, _ := c.extractAutoCast(exprType)
-		if strings.HasPrefix(n, "pointer<") {
+		n := c.extractType(exprType)
+		if c.isPointer(n) {
 			return true
 		}
 		panic("not implemented auto casting case")
 	}
 
-	if exprType == "pointer<nil>" && strings.HasPrefix(typ1, "pointer<") {
+	if exprType == "pointer<nil>" && c.isPointer(typ1) {
 		return true
 	}
 
@@ -429,25 +455,19 @@ func getBitSize(typName string) (int, error) {
 	return 0, fmt.Errorf("not a number")
 }
 
-func (c *Checker) extractPointerType(name string) (string, error) {
+// extractBaseType extracts type until base type
+func (c *Checker) extractBaseType(name string) string {
+
 	if strings.HasPrefix(name, "pointer<") {
-		var s string
-		fmt.Sscanf(name, "pointer<%s>", &s)
-		s = strings.TrimSuffix(s, ">")
-		return s, nil
+		return c.extractBaseType(c.extractType(name))
+	} else if strings.HasPrefix(name, "auto_cast<") {
+		return c.extractType(c.extractType(name))
+	} else if strings.HasPrefix(name, "array<") {
+		return c.extractType(c.extractType(name))
 	}
 
-	return "", fmt.Errorf("not a pointer")
-}
-
-func (c *Checker) extractAutoCast(name string) (string, error) {
-	if strings.HasPrefix(name, "auto_cast<") {
-		var s string
-		fmt.Sscanf(name, autoCastScheme, &s)
-
-		return s[:len(s)-1], nil
-	}
-	return "", fmt.Errorf("not a auto_cast type")
+	// it is already unwrapped so
+	return name
 }
 
 func (c *Checker) checkVarDef(stmt *VarDefStmt) {
@@ -458,12 +478,8 @@ func (c *Checker) checkVarDef(stmt *VarDefStmt) {
 	}
 
 	typName := c.getNameOfType(stmt.Type)
-	var typ = typName
-	var isPointer bool
-	if t, err := c.extractPointerType(typName); err == nil {
-		typ = t
-		isPointer = true
-	}
+	var typ = c.extractBaseType(typName)
+	var isPointer = c.isPointer(typName)
 	typSym := c.LookupSym(typ)
 	bitSize, err2 := getBitSize(typ)
 	if typSym == nil || !typSym.IsTypeDef() {
@@ -493,14 +509,6 @@ func (c *Checker) checkVarDef(stmt *VarDefStmt) {
 	c.DefineVar(stmt.Name.Name, typName)
 }
 
-func (c *Checker) extractOrGetType(name string) string {
-	pointerType, err := c.extractPointerType(name)
-	if err == nil {
-		return pointerType
-	}
-	return name
-}
-
 func (c *Checker) checkFuncDef(stmt *FuncDefStmt) {
 	c.enterFuncScope(stmt.Name.Name)
 	defer c.CloseScope()
@@ -517,7 +525,7 @@ func (c *Checker) checkFuncDef(stmt *FuncDefStmt) {
 
 	bitSize, err := getBitSize(funcdef.Type)
 
-	t := c.extractOrGetType(funcdef.Type)
+	t := c.extractBaseType(funcdef.Type)
 	typ := c.LookupSym(t).(*TypeDef)
 	if typ == nil {
 		start, end := funcdef.DefNode.Type.Pos()
@@ -537,7 +545,7 @@ func (c *Checker) checkFuncDef(stmt *FuncDefStmt) {
 			c.errorf(start, end, "re defined param %s", param.Name)
 		}
 
-		paramType := c.LookupSym(c.extractOrGetType(param.Type))
+		paramType := c.LookupSym(c.extractBaseType(param.Type))
 		if paramType == nil || !paramType.IsTypeDef() {
 			start, end := param.Param.Type.Pos()
 			c.errorf(start, end, "Provided type %s is not defined", param.Type)
@@ -765,10 +773,7 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 			return unresolvedType, err
 		}
 
-		var ltyp = left
-		if n, err := c.extractPointerType(left); err == nil {
-			ltyp = n
-		}
+		var ltyp = c.extractBaseType(left)
 
 		typDef := c.LookupSym(ltyp)
 		if typDef == nil || !typDef.IsTypeDef() {
@@ -795,13 +800,8 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 		}
 
 		c.currentSym = sym
-		n, err := c.extractPointerType(sym.TypeName())
-		var typedef Symbol
-		if err == nil {
-			typedef = c.LookupSym(n)
-		} else {
-			typedef = c.LookupSym(sym.TypeName())
-		}
+		n := c.extractBaseType(sym.TypeName())
+		var typedef = c.LookupSym(n)
 
 		if typedef == nil {
 			start, end := expr.Pos()
@@ -853,8 +853,8 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 				return unresolvedType, fmt.Errorf("right operand must be pointer")
 			}
 
-			r, err := c.extractPointerType(right)
-			AssertErr(err)
+			r := c.extractBaseType(right)
+			Assert(c.isPointer(right), "dereferenced type is not pointer")
 			return r, nil
 		case Band:
 			right, err := c.checkExpr(expr.Right)
@@ -873,14 +873,8 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 			switch r := expr.Right.(type) {
 			case *IdentExpr:
 				var typName = r.Name
-				n, err := c.extractPointerType(r.Name)
-				var sym Symbol
-				if err == nil {
-					typName = n
-					sym = c.LookupSym(n)
-				} else {
-					sym = c.LookupSym(r.Name)
-				}
+				n := c.extractBaseType(r.Name)
+				var sym = c.LookupSym(n)
 				if sym == nil || !sym.IsTypeDef() {
 					start, end := expr.Right.Pos()
 					c.errorf(start, end, "type is not found: %s", typName)
@@ -918,7 +912,7 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 			c.errorf(start, end, "invalid assignment: expected %s, got %s", l, r)
 			return unresolvedType, fmt.Errorf("invalid assignment: expected %s, got: %s", l, r)
 		} else {
-			sym := c.LookupSym(c.extractOrGetType(r))
+			sym := c.LookupSym(c.extractBaseType(r))
 			if sym.IsTypeDef() && sym.(*TypeDef).IsStruct {
 				expr.StoreAlloca = true
 			}
