@@ -174,6 +174,8 @@ type ComplexLiteral interface {
 type ArrayLitExpr struct {
 	start, end Pos
 	Elems      []Expr
+	Size       int    // calculated and assigned by semantic checking layer
+	Type       string // calculated and assigned by semantic checking layer // TODO symbol table maybe better than this approach but this is also OK
 }
 
 func (a *ArrayLitExpr) Pos() (Pos, Pos) {

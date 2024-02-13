@@ -124,7 +124,7 @@ func (c *Compiler) initBuiltinTypes() {
 	c.types["f32"] = types.Float
 	c.types["f64"] = types.Double
 
-	stringStruct := types.NewStruct(types.NewPointer(types.I8), types.I64)
+	stringStruct := types.NewStruct(types.NewPointer(types.I8), types.I64, types.I64)
 	def := c.module.NewTypeDef("string", stringStruct)
 	c.types["string"] = def
 }
@@ -152,12 +152,15 @@ func (c *Compiler) initBuiltinFuncs() {
 	runtimeExit.Linkage = enum.LinkageExternal
 	c.funcs["r_runtime_exit"] = runtimeExit
 
-	printfInternal := module.NewFunc("printf_internal", types.I32, ir.NewParam("", c.types["string"]))
+	printfInternal := module.NewFunc("printf_internal", types.I32, ir.NewParam("", types.NewPointer(c.types["char"])))
 	printfInternal.Sig.Variadic = true
 	printfInternal.Linkage = enum.LinkageExternal
 	c.funcs["printf_internal"] = printfInternal
 
-	makeString := module.NewFunc("make_string", c.types["string"], ir.NewParam("", types.NewPointer(types.I8)))
+	returnParam := ir.NewParam("", types.NewPointer(c.types["string"]))
+	returnParam.Attrs = make([]ir.ParamAttribute, 0)
+	returnParam.Attrs = append(returnParam.Attrs, ir.SRet{c.types["string"]})
+	makeString := module.NewFunc("make_string", c.types["void"], returnParam, ir.NewParam("buffer", types.NewPointer(types.I8)))
 	makeString.Linkage = enum.LinkageExternal
 	c.funcs["make_string"] = makeString
 
@@ -240,6 +243,9 @@ func (c *Compiler) compileVarDef(stmt *VarDefStmt) {
 		}
 
 		switch right.Type().(type) {
+		case *types.ArrayType:
+			c.currentBlock.NewStore(right, ptr)
+
 		case *types.PointerType:
 			if !typ.Equal(right.Type()) || c.isNull(right) {
 				cast := c.currentBlock.NewBitCast(right, typ)
@@ -562,12 +568,20 @@ func (c *Compiler) call(expr *CallExpr) value.Value {
 		for _, e := range expr.Args {
 			arg := c.compileExpr(e)
 			if funcName == "printf_internal" {
-				if t, ok := arg.Type().(*types.FloatType); ok {
+				switch t := arg.Type().(type) {
+				case *types.FloatType:
 					if t.Kind != types.FloatKindDouble {
 						// think a way better
 						arg = b.NewFPExt(arg, types.Double)
 					}
+				case *types.StructType:
+					if t.Name() == "string" {
+						var z = constant.NewInt(types.I32, 0)
+						arg = c.currentBlock.NewGetElementPtr(t, arg.(*ir.InstLoad).Src, z, constant.NewInt(types.I32, 0))
+						arg = c.currentBlock.NewLoad(types.NewPointer(types.I8), arg)
+					}
 				}
+
 			}
 			args = append(args, arg)
 		}
@@ -601,16 +615,15 @@ func sizeof(p types.Type) (int64 uint64) {
 			s += sizeof(field)
 		}
 		return s
+	case *types.ArrayType:
+		return sizeof(p.ElemType) * p.Len
 	default:
 		panic("TODO unreachable sizeof")
 	}
 }
 
-func (c *Compiler) newArray(expr *ArrayLitExpr, size uint64, typ types.Type) *ir.InstLoad {
-	var alloc = c.currentAlloc
-	if alloc == nil {
-		alloc = c.currentBlock.NewAlloca(typ)
-	}
+func (c *Compiler) newArray(expr *ArrayLitExpr, typ types.Type) value.Value {
+	var alloc = c.currentBlock.NewAlloca(typ)
 	elems := expr.Elems
 	for i, elem := range elems {
 		e := c.compileExpr(elem)
@@ -618,10 +631,14 @@ func (c *Compiler) newArray(expr *ArrayLitExpr, size uint64, typ types.Type) *ir
 		index := constant.NewInt(types.I64, int64(i))
 		gep := c.currentBlock.NewGetElementPtr(typ, alloc, zero, index)
 		gep.InBounds = true
-		c.currentBlock.NewStore(e, gep)
+		if ee, ok := e.(*ir.InstAlloca); ok {
+			c.memcpyInternal(gep, ee)
+		} else {
+			c.currentBlock.NewStore(e, gep)
+		}
 	}
 
-	return c.currentBlock.NewLoad(typ, alloc)
+	return alloc
 }
 
 func (c *Compiler) getDefaultValue(p types.Type) constant.Constant {
@@ -756,7 +773,7 @@ func (c *Compiler) compileExpr(expr Expr) value.Value {
 	case *CharExpr:
 		return constant.NewInt(types.I8, int64(expr.Unquoted))
 	case *ArrayLitExpr:
-		return c.newArray(expr, uint64(len(expr.Elems)), types.NewArray(2, c.resolveType(&IdentExpr{Name: "User"})))
+		return c.newArray(expr, types.NewArray(uint64(expr.Size), c.resolveType(&IdentExpr{Name: expr.Type})))
 	case *BinaryExpr:
 		left := c.compileExpr(expr.Left)
 		right := c.compileExpr(expr.Right)
@@ -786,11 +803,15 @@ func (c *Compiler) compileExpr(expr Expr) value.Value {
 		v2 := constant.NewCharArrayFromString(v)
 		strPtr := c.module.NewGlobalDef("", v2)
 		strPtr.Immutable = true
-		strPtr.Align = ir.Align(1)
+		strPtr.Align = 1
 		strPtr.UnnamedAddr = enum.UnnamedAddrUnnamedAddr
-		var zero = constant.NewInt(types.I8, 0)
+		var zero = constant.NewInt(types.I64, 0)
 		gep := constant.NewGetElementPtr(v2.Typ, strPtr, zero, zero)
-		return c.currentBlock.NewCall(c.getFunc("make_string"), gep)
+		gep.InBounds = true
+		alloc := c.currentBlock.NewAlloca(c.types["string"])
+		alloc.Align = 8
+		c.currentBlock.NewCall(c.getFunc("make_string"), alloc, gep)
+		return c.currentBlock.NewLoad(c.types["string"], alloc)
 	case *ObjectLitExpr:
 		typ := c.resolveType(expr.Type)
 		t, ok := typ.(*types.StructType)
@@ -856,10 +877,10 @@ func (c *Compiler) compileExpr(expr Expr) value.Value {
 		load, ok := left.(*ir.InstLoad)
 		Assert(ok, "assign_expr left operand is not loaded")
 		Assert(load.Src != nil, "assign_expr load.Src is nil")
-		if !expr.StoreAlloca {
-			c.memcpyInternal(load.Src, right)
-		} else {
+		if expr.StoreAlloca {
 			c.currentBlock.NewStore(right, load.Src)
+		} else {
+			c.memcpyInternal(load.Src, right)
 		}
 		return left
 	case *IndexExpr:

@@ -12,6 +12,11 @@ const pointerScheme = "pointer<%s>"
 const unresolvedType = "<unresolved>"
 const autoCastScheme = "auto_cast<%s>"
 
+type context struct {
+	parent          *context
+	expectedBitSize int
+}
+
 type Symbol interface {
 	IsSymbol()
 	Pos() (start Pos, end Pos)
@@ -332,8 +337,16 @@ func (c *Checker) getNameOfType(expr Expr) string {
 	case *RefTypeExpr:
 		return fmt.Sprintf(pointerScheme, c.getNameOfType(expr.Expr))
 	case *ArrayTypeExpr:
-		// TODO calculate size of array
-		return fmt.Sprintf(arrayScheme, c.getNameOfType(expr.Type), -1)
+		var size = -1
+		if expr.Size != nil {
+			switch e := expr.Size.(type) {
+			case *NumberExpr:
+				size = int(e.Value)
+			default:
+				panic("Unhandled size")
+			}
+		}
+		return fmt.Sprintf(arrayScheme, c.getNameOfType(expr.Type), size)
 	default:
 		panic("unreachable")
 	}
@@ -425,6 +438,23 @@ func (c *Checker) extractType(name string) string {
 	return name
 }
 
+func (c *Checker) getArraySizeFromTypeStr(typ string) int {
+	s := strings.TrimPrefix(typ, "array<")
+	s = strings.TrimSuffix(s, ">")
+	x := strings.SplitAfter(s, ",")
+	atoi, err := strconv.Atoi(strings.TrimSpace(x[1]))
+	if err != nil {
+		return -2
+	}
+
+	return atoi
+
+}
+
+func (c *Checker) isArray(name string) bool {
+	return strings.HasPrefix(name, "array<")
+}
+
 func (c *Checker) checkTypeCompatibility(typ1, exprType string) bool {
 	if strings.HasPrefix(exprType, "auto_cast<") {
 		n := c.extractType(exprType)
@@ -436,6 +466,22 @@ func (c *Checker) checkTypeCompatibility(typ1, exprType string) bool {
 
 	if exprType == "pointer<nil>" && c.isPointer(typ1) {
 		return true
+	}
+
+	if c.isArray(exprType) && c.isArray(typ1) {
+		typ1Size := c.getArraySizeFromTypeStr(typ1)
+		exprTypeSize := c.getArraySizeFromTypeStr(exprType)
+
+		typ1Base := c.extractBaseType(typ1)
+		exprTypeBase := c.extractBaseType(exprType)
+		if typ1Base != exprTypeBase {
+			return false
+		}
+
+		if typ1Size == -1 || typ1Size == exprTypeSize {
+			return true
+		}
+
 	}
 
 	return typ1 == exprType
@@ -470,6 +516,17 @@ func (c *Checker) extractBaseType(name string) string {
 	return name
 }
 
+func (c *Checker) fixVarDefStmt(stmt *VarDefStmt, l, r string) {
+	if c.isArray(l) && c.isArray(r) {
+		if c.getArraySizeFromTypeStr(l) == -1 {
+			stmt.Type.(*ArrayTypeExpr).Size = &NumberExpr{Value: int64(c.getArraySizeFromTypeStr(r))}
+		}
+
+		stmt.Init.(*ArrayLitExpr).Type = c.extractBaseType(l)
+		stmt.Init.(*ArrayLitExpr).Size = c.getArraySizeFromTypeStr(r)
+	}
+}
+
 func (c *Checker) checkVarDef(stmt *VarDefStmt) {
 	variable := c.GetVariable(stmt.Name.Name)
 	if variable != nil {
@@ -498,12 +555,16 @@ func (c *Checker) checkVarDef(stmt *VarDefStmt) {
 			return
 		}
 
-		if !c.checkTypeCompatibility(typName, r) && typSym != nil {
-			start, end := stmt.Init.Pos()
-			c.errorf(start, end, "Expected type %s but got %s", typName, r)
-		} else if typSym != nil {
-			stmt.StoreAlloca = !typSym.(*TypeDef).IsStruct || isPointer
+		if typSym != nil {
+			if !c.checkTypeCompatibility(typName, r) {
+				start, end := stmt.Init.Pos()
+				c.errorf(start, end, "Expected type %s but got %s", typName, r)
+			} else {
+				stmt.StoreAlloca = (!typSym.(*TypeDef).IsStruct || isPointer) && !c.isArray(typName)
+				c.fixVarDefStmt(stmt, typName, r)
+			}
 		}
+
 	}
 
 	c.DefineVar(stmt.Name.Name, typName)
@@ -728,6 +789,11 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 			if !c.checkTypeCompatibility(l, r) {
 				start, end := kv.Pos()
 				c.errorf(start, end, "type mismatch (%s:%s)", l, r)
+			} else {
+				if lit, ok := kv.Value.(*ArrayLitExpr); ok {
+					lit.Size = c.getArraySizeFromTypeStr(l)
+					lit.Type = c.extractType(l)
+				}
 			}
 
 			if err2 == nil {
@@ -813,7 +879,33 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 	case *NilExpr:
 		return "pointer<nil>", nil
 	case *IndexExpr:
-		panic("not implemented indexExpr")
+		l, err := c.checkExpr(expr.Left)
+		if err != nil {
+			return unresolvedType, err
+		}
+		c.pushExpectedBitSize(64)
+		defer c.popExpectedBitSize()
+		r, err := c.checkExpr(expr.Index)
+		if err != nil {
+			// TODO maybe return lefthand type but it is ok for now
+			return unresolvedType, err
+		}
+
+		// TODO add map in here when we implement that
+		if !c.isArray(l) {
+			start, end := expr.Pos()
+			c.errorf(start, end, "invalid access expression either left hand side must be array or map but got: %s", l)
+			return unresolvedType, fmt.Errorf("invalid access expression either left hand side must be array or map but got: %s", l)
+		}
+
+		if r != "i64" {
+			start, end := expr.Index.Pos()
+			c.errorf(start, end, "invalid index access expression, expected %s, got %s", "i64", r)
+			return unresolvedType, fmt.Errorf("invalid index access expression, expected %s, got %s", "i64", r)
+		}
+
+		return c.extractType(l), nil
+
 	case *UnaryExpr:
 		switch expr.Op {
 		case Add, Sub:
