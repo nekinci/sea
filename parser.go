@@ -267,13 +267,14 @@ func (p *Parser) parseBlock() *BlockStmt {
 	p.expect(TokLBrace)
 	blockStmt := &BlockStmt{Stmts: make([]Stmt, 0), start: p.startOfLastExpected()}
 	for p.curTok != EOF {
-		stmt := p.parseStmt()
-		blockStmt.Stmts = append(blockStmt.Stmts, stmt)
 		if p.curTok == TokRBrace {
 			p.expect(TokRBrace)
 			blockStmt.end = p.endOfLastExpected()
 			break
 		}
+
+		stmt := p.parseStmt()
+		blockStmt.Stmts = append(blockStmt.Stmts, stmt)
 	}
 	return blockStmt
 }
@@ -626,7 +627,7 @@ func (p *Parser) parsePackageStmt() *PackageStmt {
 
 func (p *Parser) parseAssignExpr(identExpr Expr) *AssignExpr {
 	p.expect(TokAssign)
-	assignExpr := &AssignExpr{identExpr, p.parseExpr(), false}
+	assignExpr := &AssignExpr{identExpr, p.parseExpr(), nil}
 	return assignExpr
 }
 

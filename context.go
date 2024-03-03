@@ -1,0 +1,74 @@
+package main
+
+import "github.com/llir/llvm/ir"
+
+type Ctx interface {
+	parentCtx() Ctx
+}
+
+type ExpectedTypeCtx interface {
+	Ctx
+	ExpectedType() string
+}
+
+type FuncCtx struct {
+	parent        Ctx
+	sym           *FuncDef
+	isProblematic bool
+	expectedType  string
+	returnTypeSym *TypeDef
+	returnsStruct bool
+	returnParam   *ir.Param
+}
+
+func (f *FuncCtx) ExpectedType() string {
+	return f.expectedType
+}
+
+func (f *FuncCtx) parentCtx() Ctx {
+	return f.parent
+}
+
+type VarAssignCtx struct {
+	parent        Ctx
+	expectedType  string
+	arraySize     int // optional for arrays
+	isStruct      bool
+	typSym        *TypeDef
+	isPointer     bool
+	isArray       bool
+	extractedType string
+
+	// compiler side fields
+	alloca *ir.InstAlloca
+}
+
+func (v *VarAssignCtx) ExpectedType() string {
+	return v.expectedType
+}
+
+func (v *VarAssignCtx) parentCtx() Ctx {
+	return v.parent
+}
+
+type CallCtx struct {
+	parent        Ctx
+	returnsStruct bool
+}
+
+func (c *CallCtx) parentCtx() Ctx {
+	return c.parent
+}
+
+type IndexCtx struct {
+	parent       Ctx
+	expectedType string
+}
+
+func (i IndexCtx) parentCtx() Ctx {
+	return i.parent
+}
+
+func (i IndexCtx) ExpectedType() string {
+	return i.expectedType
+}

@@ -2,23 +2,24 @@ package p
 
 # reads given file path and returns whole string content
 extern fun string open_file_read(string path)
-
-extern fun void pass_string(string s)
-
+extern fun i32 puts(char* str)
+extern fun i32 puts_str(string str)
+extern fun i32 puts_int(i32 a)
 
 struct JsonNode {
     string key
     string value
     string type
+
+    JsonNode* child
 }
 
-struct JsonInterpreter {
+struct JsonParser {
     i32 position
     string input
-    JsonNode[1] nodes # for now statically sized, automatically growth array do not implemented yet
 }
 
-impl JsonInterpreter {
+impl JsonParser {
 
     fun i32 current_pos() {
         return this.position
@@ -26,10 +27,25 @@ impl JsonInterpreter {
 
 }
 
+struct Deneme {
+    string a
+    string b
+    string c
+    string d
+}
+
+extern fun void handle_signal()
+fun void abc2() {
+
+    return
+}
 # main function
 fun i32 main(i32 arg) {
+ # var string file = open_file_read("./example.json")
+  handle_signal()
 
-    var char* str = "fmt"
+  for true {
+  }
 
-    return 0
+  return 0
 }

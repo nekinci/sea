@@ -10,6 +10,11 @@ type Node interface {
 	Pos() (start Pos, end Pos)
 }
 
+type Contexter interface {
+	setCtx(ctx Ctx)
+	GetCtx() Ctx
+}
+
 type Package struct {
 	Name        string
 	Stmts       []Stmt
@@ -29,14 +34,22 @@ type Expr interface {
 
 type NumberExpr struct {
 	Value      int64
-	BitSize    int // Filled up from the type checker
 	start, end Pos
+	ctx        Ctx
 }
 
 type FloatExpr struct {
 	Value      float64
-	BitSize    int // Filled up from the type checker
 	start, end Pos
+	ctx        Ctx
+}
+
+func (f *FloatExpr) setCtx(ctx Ctx) {
+	f.ctx = ctx
+}
+
+func (f *FloatExpr) GetCtx() Ctx {
+	return f.ctx
 }
 
 func (f *FloatExpr) Pos() (Pos, Pos) {
@@ -66,6 +79,15 @@ type StringExpr struct {
 	Value      string
 	Unquoted   string
 	start, end Pos
+	ctx        Ctx
+}
+
+func (s *StringExpr) setCtx(ctx Ctx) {
+	s.ctx = ctx
+}
+
+func (s *StringExpr) GetCtx() Ctx {
+	return s.ctx
 }
 
 func (s *StringExpr) Pos() (Pos, Pos) {
@@ -88,6 +110,14 @@ func (c *CharExpr) IsExpr() {}
 
 func (n *NumberExpr) IsExpr() {}
 
+func (n *NumberExpr) setCtx(ctx Ctx) {
+	n.ctx = ctx
+}
+
+func (n *NumberExpr) GetCtx() Ctx {
+	return n.ctx
+}
+
 type BoolExpr struct {
 	Value      bool // 1 true 0 false
 	start, end Pos
@@ -109,9 +139,23 @@ func (u *UnaryExpr) Pos() (Pos, Pos) {
 }
 
 type AssignExpr struct {
-	Left        Expr
-	Right       Expr
-	StoreAlloca bool // TODO move to lookup table
+	Left  Expr
+	Right Expr
+	ctx   *VarAssignCtx
+}
+
+func (a *AssignExpr) setCtx(ctx Ctx) {
+	ct, ok := ctx.(*VarAssignCtx)
+	Assert(ok, "Unexpected ctx type")
+	a.ctx = ct
+}
+
+func (a *AssignExpr) GetCtx() Ctx {
+	return a.ctx
+}
+
+func (a *AssignExpr) Context() *VarAssignCtx {
+	return a.ctx
 }
 
 func (a *AssignExpr) Pos() (Pos, Pos) {
@@ -144,6 +188,15 @@ type CallExpr struct {
 	end      Pos
 	MethodOf string
 	TypeCast bool
+	ctx      Ctx
+}
+
+func (c *CallExpr) setCtx(ctx Ctx) {
+	c.ctx = ctx
+}
+
+func (c *CallExpr) GetCtx() Ctx {
+	return c.ctx
 }
 
 func (c *CallExpr) Pos() (Pos, Pos) {
@@ -174,8 +227,7 @@ type ComplexLiteral interface {
 type ArrayLitExpr struct {
 	start, end Pos
 	Elems      []Expr
-	Size       int    // calculated and assigned by semantic checking layer
-	Type       string // calculated and assigned by semantic checking layer // TODO symbol table maybe better than this approach but this is also OK
+	ctx        Ctx
 }
 
 func (a *ArrayLitExpr) Pos() (Pos, Pos) {
@@ -183,6 +235,12 @@ func (a *ArrayLitExpr) Pos() (Pos, Pos) {
 }
 func (a *ArrayLitExpr) IsExpr()           {}
 func (a *ArrayLitExpr) IsComplexLiteral() {}
+func (a *ArrayLitExpr) setCtx(ctx Ctx) {
+	a.ctx = ctx
+}
+func (a *ArrayLitExpr) GetCtx() Ctx {
+	return a.ctx
+}
 
 // RefTypeExpr used for type identifiers, like int*, bool* ...
 type RefTypeExpr struct {
@@ -249,6 +307,21 @@ type FuncDefStmt struct {
 	IsExternal bool
 	start      Pos
 	end        *Pos
+	ctx        *FuncCtx
+}
+
+func (f *FuncDefStmt) setCtx(ctx Ctx) {
+	ct, ok := ctx.(*FuncCtx)
+	Assert(ok, "FuncCtx must be provided!")
+	f.ctx = ct
+}
+
+func (f *FuncDefStmt) GetCtx() Ctx {
+	return f.ctx
+}
+
+func (f *FuncDefStmt) Context() *FuncCtx {
+	return f.ctx
 }
 
 func (f *FuncDefStmt) Pos() (Pos, Pos) {
@@ -353,6 +426,21 @@ func (e *IfStmt) IsStmt() {}
 type ReturnStmt struct {
 	Value      Expr
 	start, end Pos
+	ctx        *FuncCtx
+}
+
+func (r *ReturnStmt) setCtx(ctx Ctx) {
+	ct, ok := ctx.(*FuncCtx)
+	Assert(ok, "FuncCtx must be provided")
+	r.ctx = ct
+}
+
+func (r *ReturnStmt) GetCtx() Ctx {
+	return r.ctx
+}
+
+func (r *ReturnStmt) Context() *FuncCtx {
+	return r.ctx
 }
 
 func (r *ReturnStmt) Pos() (Pos, Pos) {
@@ -387,11 +475,25 @@ func (c *ContinueStmt) Pos() (Pos, Pos) {
 func (c *ContinueStmt) IsStmt() {}
 
 type VarDefStmt struct {
-	Name        *IdentExpr
-	Type        Expr
-	Init        Expr
-	start       Pos
-	StoreAlloca bool
+	Name  *IdentExpr
+	Type  Expr
+	Init  Expr
+	start Pos
+	ctx   *VarAssignCtx
+}
+
+func (v *VarDefStmt) setCtx(ctx Ctx) {
+	ct, ok := ctx.(*VarAssignCtx)
+	Assert(ok, "Unexpected ctx type")
+	v.ctx = ct
+}
+
+func (v *VarDefStmt) GetCtx() Ctx {
+	return v.ctx
+}
+
+func (v *VarDefStmt) Context() *VarAssignCtx {
+	return v.GetCtx().(*VarAssignCtx)
 }
 
 func (v *VarDefStmt) Pos() (Pos, Pos) {

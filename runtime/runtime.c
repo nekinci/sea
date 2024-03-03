@@ -4,6 +4,7 @@
 #include<stdlib.h>
 #include <string.h>
 #include <fcntl.h>
+#include <signal.h>
 
 #pragma clang diagnostic ignored "-Wvarargs"
 
@@ -14,10 +15,8 @@ typedef struct {
     size_t cap;
 } string;
 
-
-void* memcpy_internal(void* dest, const void* src) {
-    size_t s = sizeof(dest) * 2; // fixme
-    return memcpy(dest, src, s);
+void* memcpy_internal(void* dest, const void* src, size_t sizeinbytes) {
+    return memcpy(dest, src, sizeinbytes);
 }
 
 string make_string(char* buffer) {
@@ -25,6 +24,7 @@ string make_string(char* buffer) {
     string result;
     result.buffer = buffer;
     result.size = size;
+    result.cap = 5;
     return result;
 }
 
@@ -62,8 +62,27 @@ int scanf_internal(string s, ...) {
      return r;
 }
 
+int another_scanf(string* s) {
+    s -> size = 5;
+    return 0;
+}
+
+int yet_another_scanf(string s) {
+s.size = 4;
+    return 0;
+}
+
+string* abc(int x) {
+    return NULL;
+}
+
+int cba(int* x) {
+    return 0;
+}
+
 
 void* malloc_internal(size_t s) {
+    printf("%zu", s);
     return malloc(s);
 }
 
@@ -84,9 +103,6 @@ int open_internal(const char* path, int oflag) {
     exit(38);
 }
 
-void pass_string(string s) {
-    printf("zu: %l", s.size);
-}
 
 string cstr_append(string s, char c, int* cap) {
   if (*cap == 0) {
@@ -122,7 +138,39 @@ string open_file_read(string path) {
      return data;
 }
 
+string add(int a) {
+    if (a > 0) {
+        return (string) {.buffer = "hello"};
+    } else {
+        return (string) {.buffer = "abc"};
+    }
+}
+
+void puts_int(int a) {
+    printf("%d", a);
+}
+
+int puts_str(string s) {
+    return puts(s.buffer);
+}
+
+
+void doSomething(int* ptr) {
+    ptr[1] = 11;
+    printf("%d\n", ptr[0]);
+}
 
 int main2() {
+char* abc = "abc";
+printf("%c\n", abc[0]);
     return 0;
+}
+
+void h_s(int signo) {
+    printf("caught signal %d\n", signo);
+    exit(0);
+}
+void handle_signal() {
+printf("signal handler active\n");
+    signal(SIGINT, h_s);
 }

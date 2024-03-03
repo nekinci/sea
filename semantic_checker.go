@@ -12,11 +12,6 @@ const pointerScheme = "pointer<%s>"
 const unresolvedType = "<unresolved>"
 const autoCastScheme = "auto_cast<%s>"
 
-type context struct {
-	parent          *context
-	expectedBitSize int
-}
-
 type Symbol interface {
 	IsSymbol()
 	Pos() (start Pos, end Pos)
@@ -165,37 +160,17 @@ type Checker struct {
 	typeScopes  map[string]*Scope
 
 	// Context
-	expectedFuncType string
-	currentSym       Symbol
-	expectedBitSize  []int
+	currentSym Symbol
+	ctx        Ctx
 	//
 }
 
-func (c *Checker) pushExpectedBitSize(i int) {
-	c.expectedBitSize = append(c.expectedBitSize, i)
+func (c *Checker) newCtx(ctx Ctx) {
+	c.ctx = ctx
 }
 
-func (c *Checker) popExpectedBitSize() int {
-	if len(c.expectedBitSize) == 0 {
-		panic("empty expectedBitSize")
-	}
-
-	i := c.expectedBitSize[len(c.expectedBitSize)-1]
-	c.expectedBitSize = c.expectedBitSize[:len(c.expectedBitSize)-1]
-	return i
-}
-
-func (c *Checker) topExpectedBitSize() int {
-	if len(c.expectedBitSize) == 0 {
-		panic("empty expectedBitSize")
-	}
-	return c.expectedBitSize[len(c.expectedBitSize)-1]
-}
-
-func (c *Checker) dupExpectedBitSize() int {
-	b := c.expectedBitSize[len(c.expectedBitSize)-1]
-	c.pushExpectedBitSize(b)
-	return b
+func (c *Checker) leaveCtx() {
+	c.ctx = c.ctx.parentCtx()
 }
 
 func (c *Checker) turnTempScopeBack() {
@@ -258,7 +233,7 @@ func (c *Checker) initGlobalScope() {
 		Params: []Param{{
 			Param: nil,
 			Name:  "fmt",
-			Type:  "string",
+			Type:  "pointer<char>",
 		}},
 		External:  true,
 		Variadic:  true,
@@ -439,6 +414,9 @@ func (c *Checker) extractType(name string) string {
 }
 
 func (c *Checker) getArraySizeFromTypeStr(typ string) int {
+	if !strings.HasPrefix(typ, "array<") {
+		return -1
+	}
 	s := strings.TrimPrefix(typ, "array<")
 	s = strings.TrimSuffix(s, ">")
 	x := strings.SplitAfter(s, ",")
@@ -487,18 +465,19 @@ func (c *Checker) checkTypeCompatibility(typ1, exprType string) bool {
 	return typ1 == exprType
 }
 
-func getBitSize(typName string) (int, error) {
+// getBitSize returns expectedBitSize and if it is not matched any bit-typed type returns -1.
+func getBitSize(typName string) int {
 	if typName == "i32" || typName == "f32" {
-		return 32, nil
+		return 32
 	} else if typName == "i16" || typName == "f16" {
-		return 16, nil
+		return 16
 	} else if typName == "i8" {
-		return 8, nil
+		return 8
 	} else if typName == "f64" || typName == "i64" {
-		return 64, nil
+		return 64
 	}
 
-	return 0, fmt.Errorf("not a number")
+	return -1
 }
 
 // extractBaseType extracts type until base type
@@ -516,14 +495,14 @@ func (c *Checker) extractBaseType(name string) string {
 	return name
 }
 
-func (c *Checker) fixVarDefStmt(stmt *VarDefStmt, l, r string) {
+func (c *Checker) fixVarDefStmt(stmt *VarDefStmt, l, r string, ctx *VarAssignCtx) {
 	if c.isArray(l) && c.isArray(r) {
 		if c.getArraySizeFromTypeStr(l) == -1 {
 			stmt.Type.(*ArrayTypeExpr).Size = &NumberExpr{Value: int64(c.getArraySizeFromTypeStr(r))}
 		}
 
-		stmt.Init.(*ArrayLitExpr).Type = c.extractBaseType(l)
-		stmt.Init.(*ArrayLitExpr).Size = c.getArraySizeFromTypeStr(r)
+		stmt.Init.(*ArrayLitExpr).setCtx(ctx)
+		ctx.arraySize = c.getArraySizeFromTypeStr(r)
 	}
 }
 
@@ -536,19 +515,22 @@ func (c *Checker) checkVarDef(stmt *VarDefStmt) {
 
 	typName := c.getNameOfType(stmt.Type)
 	var typ = c.extractBaseType(typName)
-	var isPointer = c.isPointer(typName)
 	typSym := c.LookupSym(typ)
-	bitSize, err2 := getBitSize(typ)
+	ctx := &VarAssignCtx{
+		parent:       c.ctx,
+		expectedType: typName,
+	}
+
+	c.newCtx(ctx)
+	defer c.leaveCtx()
+	stmt.setCtx(ctx)
+
 	if typSym == nil || !typSym.IsTypeDef() {
 		start, end := stmt.Type.Pos()
 		c.errorf(start, end, "type %s is not defined", typName)
 	}
 
 	if stmt.Init != nil {
-		if err2 == nil {
-			c.pushExpectedBitSize(bitSize)
-			defer c.popExpectedBitSize()
-		}
 
 		r, err := c.checkExpr(stmt.Init)
 		if err != nil {
@@ -560,14 +542,21 @@ func (c *Checker) checkVarDef(stmt *VarDefStmt) {
 				start, end := stmt.Init.Pos()
 				c.errorf(start, end, "Expected type %s but got %s", typName, r)
 			} else {
-				stmt.StoreAlloca = (!typSym.(*TypeDef).IsStruct || isPointer) && !c.isArray(typName)
-				c.fixVarDefStmt(stmt, typName, r)
+				c.fixVarDefStmt(stmt, typName, r, ctx)
+				c.setVarAssignCtxFields(ctx, typName, typSym.(*TypeDef))
 			}
 		}
 
 	}
 
 	c.DefineVar(stmt.Name.Name, typName)
+}
+
+func (c *Checker) setVarAssignCtxFields(ctx *VarAssignCtx, typName string, typSym *TypeDef) {
+	ctx.isStruct = typSym.IsStruct
+	ctx.isPointer = c.isPointer(typName)
+	ctx.isArray = c.isArray(typName)
+	ctx.extractedType = c.extractBaseType(typName)
 }
 
 func (c *Checker) checkFuncDef(stmt *FuncDefStmt) {
@@ -584,18 +573,25 @@ func (c *Checker) checkFuncDef(stmt *FuncDefStmt) {
 		return
 	}
 
-	bitSize, err := getBitSize(funcdef.Type)
+	ctx := &FuncCtx{
+		parent:        nil,
+		sym:           funcdef,
+		isProblematic: false,
+	}
+	stmt.setCtx(ctx)
+	c.newCtx(ctx)
+	defer c.leaveCtx()
 
 	t := c.extractBaseType(funcdef.Type)
 	typ := c.LookupSym(t).(*TypeDef)
 	if typ == nil {
+		ctx.isProblematic = true
 		start, end := funcdef.DefNode.Type.Pos()
 		c.errorf(start, end, "Type %s is not defined", funcdef.Type)
 	} else {
-		c.expectedFuncType = funcdef.Type
-		if err == nil {
-			c.pushExpectedBitSize(bitSize)
-		}
+		ctx.expectedType = funcdef.Type
+		ctx.returnsStruct = typ.IsStruct
+		ctx.returnTypeSym = typ
 	}
 
 	for _, param := range funcdef.Params {
@@ -673,9 +669,10 @@ func (c *Checker) checkStmt(stmt Stmt) {
 				return
 			}
 		}
-		if !c.checkTypeCompatibility(c.expectedFuncType, exprType) {
+		stmt.setCtx(c.ctx)
+		if !c.checkTypeCompatibility(c.ctx.(*FuncCtx).expectedType, exprType) {
 			start, end := stmt.Value.Pos()
-			c.errorf(start, end, "expected %s, got %s", c.expectedFuncType, exprType)
+			c.errorf(start, end, "expected %s, got %s", c.ctx.(*FuncCtx).expectedType, exprType)
 		}
 	case *IfStmt:
 		l, err := c.checkExpr(stmt.Cond)
@@ -694,7 +691,8 @@ func (c *Checker) checkStmt(stmt Stmt) {
 
 	case *ForStmt:
 		// TODO
-		// Assert(false, "implement me")
+		c.checkStmt(stmt.Body)
+		//Assert(false, "implement me")
 
 	default:
 		panic("Unhandled")
@@ -710,14 +708,24 @@ func isNumber(t string) bool {
 func (c *Checker) checkExpr(expr Expr) (string, error) {
 	switch expr := expr.(type) {
 	case *NumberExpr:
-		size := c.topExpectedBitSize()
-		expr.BitSize = size
-		return "i" + strconv.Itoa(size), nil
+		expr.setCtx(c.ctx)
+		if ctx, ok := c.ctx.(ExpectedTypeCtx); ok {
+			return "i" + strconv.Itoa(getBitSize(ctx.ExpectedType())), nil
+		}
+		return "i" + strconv.Itoa(64), nil
 	case *FloatExpr:
-		size := c.topExpectedBitSize()
-		expr.BitSize = size
-		return "f" + strconv.Itoa(size), nil
+		expr.setCtx(c.ctx)
+		if ctx, ok := c.ctx.(ExpectedTypeCtx); ok {
+			return "f" + strconv.Itoa(getBitSize(ctx.ExpectedType())), nil
+		}
+		return "f" + strconv.Itoa(64), nil
 	case *StringExpr:
+		expr.setCtx(c.ctx)
+		if ctx, ok := c.ctx.(ExpectedTypeCtx); ok {
+			if ctx.ExpectedType() == "pointer<char>" {
+				return "pointer<char>", nil
+			}
+		}
 		return "string", nil
 	case *CharExpr:
 		return "char", nil
@@ -776,11 +784,9 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 				continue
 			}
 
-			size, err2 := getBitSize(l)
-			if err2 == nil {
-				c.pushExpectedBitSize(size)
-			}
-
+			ctx := &VarAssignCtx{parent: c.ctx, expectedType: l}
+			c.newCtx(ctx)
+			ctx.arraySize = c.getArraySizeFromTypeStr(l)
 			r, err := c.checkExpr(kv.Value)
 			if err != nil {
 				continue
@@ -790,21 +796,18 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 				start, end := kv.Pos()
 				c.errorf(start, end, "type mismatch (%s:%s)", l, r)
 			} else {
-				if lit, ok := kv.Value.(*ArrayLitExpr); ok {
-					lit.Size = c.getArraySizeFromTypeStr(l)
-					lit.Type = c.extractType(l)
+				if ctxter, ok := kv.Value.(Contexter); ok {
+					ctxter.setCtx(ctx)
 				}
+				c.setVarAssignCtxFields(ctx, l, c.LookupSym(l).(*TypeDef))
 			}
 
-			if err2 == nil {
-				c.popExpectedBitSize()
-			}
-
+			c.leaveCtx()
 		}
 
 		return def.Name, nil
 	case *BinaryExpr:
-		c.dupExpectedBitSize()
+
 		left, err := c.checkExpr(expr.Left)
 		if err != nil {
 			return left, err
@@ -815,7 +818,6 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 			return right, err
 		}
 
-		c.popExpectedBitSize()
 		// TODO compability cases
 
 		switch expr.Op {
@@ -883,8 +885,8 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 		if err != nil {
 			return unresolvedType, err
 		}
-		c.pushExpectedBitSize(64)
-		defer c.popExpectedBitSize()
+		c.newCtx(&IndexCtx{parent: c.ctx, expectedType: "i64"})
+		defer c.leaveCtx()
 		r, err := c.checkExpr(expr.Index)
 		if err != nil {
 			// TODO maybe return lefthand type but it is ok for now
@@ -892,7 +894,7 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 		}
 
 		// TODO add map in here when we implement that
-		if !c.isArray(l) {
+		if !c.isArray(l) && l != "string" && !c.isPointer(l) {
 			start, end := expr.Pos()
 			c.errorf(start, end, "invalid access expression either left hand side must be array or map but got: %s", l)
 			return unresolvedType, fmt.Errorf("invalid access expression either left hand side must be array or map but got: %s", l)
@@ -988,11 +990,14 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 			return unresolvedType, err
 		}
 
-		size, err := getBitSize(l)
-		if err == nil {
-			c.pushExpectedBitSize(size)
-			defer c.popExpectedBitSize()
+		ctx := &VarAssignCtx{
+			parent:       c.ctx,
+			expectedType: l,
 		}
+
+		c.newCtx(ctx)
+		expr.setCtx(ctx)
+		defer c.leaveCtx()
 
 		r, err := c.checkExpr(expr.Right)
 		if err != nil {
@@ -1005,14 +1010,20 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 			return unresolvedType, fmt.Errorf("invalid assignment: expected %s, got: %s", l, r)
 		} else {
 			sym := c.LookupSym(c.extractBaseType(r))
-			if sym.IsTypeDef() && sym.(*TypeDef).IsStruct {
-				expr.StoreAlloca = true
+			if sym.IsTypeDef() {
+				c.setVarAssignCtxFields(ctx, sym.TypeName(), sym.(*TypeDef))
 			}
 		}
 
 		return l, nil
 
 	case *CallExpr:
+
+		ctx := &CallCtx{parent: c.ctx}
+		c.newCtx(ctx)
+		defer c.leaveCtx()
+		expr.setCtx(ctx)
+
 		l, err := c.checkExpr(expr.Left)
 
 		if err != nil {
@@ -1040,30 +1051,23 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 			}
 		}
 
-		var isMalloc bool = funcDef.Name == "malloc_internal" && funcDef.MethodOf == ""
+		var isMalloc = funcDef.Name == "malloc_internal" && funcDef.MethodOf == ""
 		if !funcDef.TypeCast {
 			for i, _ := range expr.Args {
 
-				var err3 error = fmt.Errorf("empty error")
+				ctx := &VarAssignCtx{parent: c.ctx}
 				if i < len(funcDef.Params) {
-					var size int
-					size, err3 = getBitSize(funcDef.Params[i].Type)
-					if err3 == nil {
-						c.pushExpectedBitSize(size)
-					}
+					c.newCtx(ctx)
+					arg := funcDef.Params[i]
+					ctx.expectedType = arg.Type
 				}
 
 				t, err2 := c.checkExpr(expr.Args[i])
 				if err2 != nil {
+					if err == nil {
+						err = err2
+					}
 					continue
-				}
-
-				if err3 == nil {
-					c.popExpectedBitSize()
-				}
-
-				if err == nil {
-					err = err2
 				}
 
 				if i < len(funcDef.Params) {
@@ -1072,9 +1076,11 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 						start, end := expr.Args[i].Pos()
 						c.errorf(start, end, "expected %s, got %s", arg.Type, t)
 						err = fmt.Errorf("expected %s, got %s", arg.Type, t)
+					} else {
+						c.setVarAssignCtxFields(ctx, arg.Type, c.LookupSym(c.extractType(arg.Type)).(*TypeDef))
 					}
+					c.leaveCtx()
 				}
-
 			}
 		} else {
 			err = c.checkTypeCast(expr, funcDef)

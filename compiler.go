@@ -159,7 +159,7 @@ func (c *Compiler) initBuiltinFuncs() {
 
 	returnParam := ir.NewParam("", types.NewPointer(c.types["string"]))
 	returnParam.Attrs = make([]ir.ParamAttribute, 0)
-	returnParam.Attrs = append(returnParam.Attrs, ir.SRet{c.types["string"]})
+	returnParam.Attrs = append(returnParam.Attrs, ir.SRet{Typ: c.types["string"]})
 	makeString := module.NewFunc("make_string", c.types["void"], returnParam, ir.NewParam("buffer", types.NewPointer(types.I8)))
 	makeString.Linkage = enum.LinkageExternal
 	c.funcs["make_string"] = makeString
@@ -177,7 +177,11 @@ func (c *Compiler) initBuiltinFuncs() {
 	mallocInternal.Linkage = enum.LinkageExternal
 	c.funcs["malloc_internal"] = mallocInternal
 
-	memcpyInternal := module.NewFunc("memcpy_internal", types.NewPointer(types.I8), ir.NewParam("dest", types.NewPointer(types.I8)), ir.NewParam("src", types.NewPointer(types.I8)))
+	memcpyInternal := module.NewFunc("memcpy_internal", types.NewPointer(types.I8),
+		ir.NewParam("dest", types.NewPointer(types.I8)),
+		ir.NewParam("src", types.NewPointer(types.I8)),
+		ir.NewParam("sizeof_i64", types.I64),
+	)
 	memcpyInternal.Linkage = enum.LinkageExternal
 	c.funcs["memcpy_internal"] = memcpyInternal
 
@@ -221,22 +225,10 @@ func (c *Compiler) compileVarDef(stmt *VarDefStmt) {
 	c.currentAlloc = ptr
 	c.Define(stmt.Name.Name, ptr)
 
-	// For example in golang,
-	// var i i16 = 5 OK
-	// var i i16 = 6 + 5  OK
-	// var i i16 = d(i16) OK
-	// var i i16 = d(i32) NOK
-	// var i i16 = d(i32) + 5 NOK
-	// var i i16 = d(i32) + d(i32) NOK
 	if stmt.Init != nil {
 		right := c.compileExpr(stmt.Init)
 
-		// that means it is not assignable and already assigned like structs
-		//if _, ok := right.(*ir.InstAlloca); ok {
-		//	return
-		//}
-
-		if !stmt.StoreAlloca {
+		if !c.isAssignable(stmt.Context()) {
 			// do memcpy from returned alloca
 			c.memcpyInternal(ptr, right)
 			return
@@ -280,6 +272,16 @@ func (c *Compiler) compileFunc(def *FuncDefStmt, isMethod bool, thisType types.T
 
 	params := make([]*ir.Param, 0)
 
+	if t, ok := typ.(*types.StructType); ok {
+		// struct types should be passed as parameter by the llvm standards
+		returnParam := ir.NewParam("returnVal", types.NewPointer(t))
+		returnParam.Attrs = make([]ir.ParamAttribute, 0)
+		returnParam.Attrs = append(returnParam.Attrs, ir.SRet{Typ: t})
+		returnParam.Attrs = append(returnParam.Attrs, enum.ParamAttrNoAlias)
+		params = append(params, returnParam)
+		typ = types.Void
+	}
+
 	if isMethod {
 		param := ir.NewParam("this", types.NewPointer(thisType))
 		params = append(params, param)
@@ -289,7 +291,14 @@ func (c *Compiler) compileFunc(def *FuncDefStmt, isMethod bool, thisType types.T
 	for _, def := range def.Params {
 		Assert(def.Name.Name != "this", "param name cannot be this")
 		typ2 := c.resolveType(def.Type)
-		param := ir.NewParam(def.Name.Name, typ2)
+		var param *ir.Param
+		if t2, ok := typ2.(*types.StructType); ok {
+			param = ir.NewParam(def.Name.Name, types.NewPointer(t2))
+			param.Attrs = make([]ir.ParamAttribute, 0)
+			param.Attrs = append(param.Attrs, ir.Byval{Typ: t2})
+		} else {
+			param = ir.NewParam(def.Name.Name, typ2)
+		}
 		params = append(params, param)
 
 		// TODO merge with compileVarDef function
@@ -307,6 +316,10 @@ func (c *Compiler) compileFunc(def *FuncDefStmt, isMethod bool, thisType types.T
 		if !onlyDeclare {
 			block := f.NewBlock(entryBlock)
 			c.currentBlock = block
+
+			if def.Context().returnsStruct {
+				def.Context().returnParam = f.Params[0]
+			}
 
 			for _, innerStmt := range def.Body.Stmts {
 				c.compileStmt(innerStmt)
@@ -347,7 +360,14 @@ func (c *Compiler) compileStmt(stmt Stmt) {
 		if innerStmt.Value == nil {
 			c.currentBlock.NewRet(nil)
 		} else {
-			c.currentBlock.NewRet(c.compileExpr(innerStmt.Value))
+			if innerStmt.Context().returnsStruct {
+				param := innerStmt.Context().returnParam
+				val := c.compileExpr(innerStmt.Value)
+				c.currentBlock.NewStore(val, param)
+				c.currentBlock.NewRet(nil)
+			} else {
+				c.currentBlock.NewRet(c.compileExpr(innerStmt.Value))
+			}
 		}
 	case *BreakStmt:
 		c.currentBlock.NewBr(c.breakBlock)
@@ -562,10 +582,22 @@ func (c *Compiler) call(expr *CallExpr) value.Value {
 		args = append(args, c.getThisArg(expr.Left))
 	}
 
+	var returnVal value.Value = nil
 	if !expr.TypeCast {
 		fun := c.getFunc(funcName)
 
-		for _, e := range expr.Args {
+		if len(fun.Params) > 0 {
+			param := fun.Params[0]
+			if len(param.Attrs) > 0 {
+				if _, ok := param.Attrs[0].(ir.SRet); ok {
+					alloc := c.currentBlock.NewAlloca(param.Type().(*types.PointerType).ElemType)
+					args = append(args, alloc)
+					returnVal = alloc
+				}
+			}
+		}
+
+		for i, e := range expr.Args {
 			arg := c.compileExpr(e)
 			if funcName == "printf_internal" {
 				switch t := arg.Type().(type) {
@@ -574,19 +606,36 @@ func (c *Compiler) call(expr *CallExpr) value.Value {
 						// think a way better
 						arg = b.NewFPExt(arg, types.Double)
 					}
-				case *types.StructType:
-					if t.Name() == "string" {
-						var z = constant.NewInt(types.I32, 0)
-						arg = c.currentBlock.NewGetElementPtr(t, arg.(*ir.InstLoad).Src, z, constant.NewInt(types.I32, 0))
-						arg = c.currentBlock.NewLoad(types.NewPointer(types.I8), arg)
-					}
 				}
 
 			}
+
+			if i == 0 {
+				idx := 0
+				if returnVal != nil {
+					idx += 1
+				}
+				param := fun.Params[idx]
+				if len(param.Attrs) > 0 {
+
+					if _, ok := param.Attrs[0].(ir.Byval); ok {
+						if _, ok := arg.Type().(*types.PointerType); !ok {
+							alloca := c.currentBlock.NewAlloca(arg.Type())
+							c.memcpyInternal(alloca, arg.(*ir.InstLoad).Src)
+							arg = alloca
+						}
+					}
+				}
+			}
+
 			args = append(args, arg)
 		}
 
-		return b.NewCall(fun, args...)
+		callRes := b.NewCall(fun, args...)
+		if returnVal != nil {
+			return returnVal
+		}
+		return callRes
 	} else {
 		return c.primitiveCasting(funcName, expr)
 	}
@@ -598,6 +647,20 @@ func (c *Compiler) resolveFieldIndex(name, typ string) (int, error) {
 	}
 
 	return -1, fmt.Errorf("unknown field index: %v for %s", name, typ)
+}
+
+func (c *Compiler) callSizeOf(t types.Type) value.Value {
+	switch t := t.(type) {
+	case *types.StructType, *types.ArrayType, *types.IntType, *types.FloatType:
+		alloca := c.currentBlock.NewAlloca(t)
+		endPtr := c.currentBlock.NewGetElementPtr(t, alloca, constant.NewInt(types.I32, 1))
+		ptrToInt := c.currentBlock.NewPtrToInt(alloca, types.I64)
+		endPtrInt := c.currentBlock.NewPtrToInt(endPtr, types.I64)
+		sizeInBytes := generateOperation(c.currentBlock, endPtrInt, ptrToInt, Sub)
+		return sizeInBytes
+	default:
+		panic("implement sizeof case")
+	}
 }
 
 // sizeOfCompilationTime returns the size of
@@ -623,7 +686,9 @@ func sizeof(p types.Type) (int64 uint64) {
 }
 
 func (c *Compiler) newArray(expr *ArrayLitExpr, typ types.Type) value.Value {
+
 	var alloc = c.currentBlock.NewAlloca(typ)
+
 	elems := expr.Elems
 	for i, elem := range elems {
 		e := c.compileExpr(elem)
@@ -731,9 +796,10 @@ func (c *Compiler) getThisArg(expr Expr) value.Value {
 
 func (c *Compiler) memcpyInternal(dest, src value.Value) value.Value {
 	f := c.getFunc("memcpy_internal")
+	sizeInBytes := c.callSizeOf(src.Type().(*types.PointerType).ElemType)
 	a1 := c.currentBlock.NewBitCast(dest, types.NewPointer(types.I8))
 	a2 := c.currentBlock.NewBitCast(src, types.NewPointer(types.I8))
-	return c.currentBlock.NewCall(f, a1, a2)
+	return c.currentBlock.NewCall(f, a1, a2, sizeInBytes)
 }
 
 func (c *Compiler) mallocInternal(size uint64) value.Value {
@@ -741,8 +807,11 @@ func (c *Compiler) mallocInternal(size uint64) value.Value {
 		Left: &IdentExpr{Name: "malloc_internal"},
 		Args: []Expr{
 			&NumberExpr{
-				Value:   int64(size),
-				BitSize: 64,
+				Value: int64(size),
+				ctx: &VarAssignCtx{
+					parent:       nil,
+					expectedType: "i64",
+				},
 			},
 		},
 		end:      Pos{},
@@ -765,6 +834,24 @@ func (c *Compiler) getSizeOf(expr Expr) uint64 {
 	}
 }
 
+func (c *Compiler) isAssignable(ctx *VarAssignCtx) bool {
+
+	if ctx.ExpectedType() == "string" {
+		return false
+	}
+
+	if ctx.isArray {
+		return false
+	}
+
+	if ctx.isStruct {
+		return false
+	}
+
+	return true
+
+}
+
 func (c *Compiler) compileExpr(expr Expr) value.Value {
 	switch expr := expr.(type) {
 	case *NilExpr:
@@ -773,21 +860,49 @@ func (c *Compiler) compileExpr(expr Expr) value.Value {
 	case *CharExpr:
 		return constant.NewInt(types.I8, int64(expr.Unquoted))
 	case *ArrayLitExpr:
-		return c.newArray(expr, types.NewArray(uint64(expr.Size), c.resolveType(&IdentExpr{Name: expr.Type})))
+		var arrayType *ArrayTypeExpr
+		switch ctx := expr.GetCtx().(type) {
+		case *VarAssignCtx:
+			arrayType = &ArrayTypeExpr{
+				Type: &IdentExpr{Name: ctx.extractedType},
+				Size: &NumberExpr{Value: int64(ctx.arraySize)},
+				end:  Pos{},
+			}
+		default:
+			panic("not implemented ctx for array lit")
+		}
+		typ := c.resolveType(arrayType)
+		return c.newArray(expr, typ)
 	case *BinaryExpr:
 		left := c.compileExpr(expr.Left)
 		right := c.compileExpr(expr.Right)
-		var v value.Value = left
-		switch expr.Left.(type) {
+		var v = left
+		switch e := expr.Left.(type) {
 		case *UnaryExpr:
-			v = c.currentBlock.NewLoad(types.I32, v)
+			if e.Op != Sizeof {
+				v = c.currentBlock.NewLoad(types.I32, v)
+			}
 		}
 
 		return generateOperation(c.currentBlock, v, right, expr.Op)
 	case *NumberExpr:
-		return constant.NewInt(types.NewInt(uint64(expr.BitSize)), expr.Value)
+		ct := expr.GetCtx()
+		ctx, ok := ct.(ExpectedTypeCtx)
+		Assert(ok, "Unimplemented number type")
+		size := getBitSize(ctx.ExpectedType())
+		if size == -1 {
+			size = 32 // default
+		}
+		return constant.NewInt(types.NewInt(uint64(size)), expr.Value)
 	case *FloatExpr:
-		switch expr.BitSize {
+		ct := expr.GetCtx()
+		ctx, ok := ct.(ExpectedTypeCtx)
+		Assert(ok, "Unimplemented ctx type float")
+		size := getBitSize(ctx.ExpectedType())
+		if size == -1 {
+			size = 64 // default
+		}
+		switch size {
 		case 16:
 			return constant.NewFloat(types.Half, expr.Value)
 		case 32:
@@ -803,11 +918,17 @@ func (c *Compiler) compileExpr(expr Expr) value.Value {
 		v2 := constant.NewCharArrayFromString(v)
 		strPtr := c.module.NewGlobalDef("", v2)
 		strPtr.Immutable = true
-		strPtr.Align = 1
 		strPtr.UnnamedAddr = enum.UnnamedAddrUnnamedAddr
+		var expectedType = "string"
+		ctx, ok := expr.GetCtx().(ExpectedTypeCtx)
+		Assert(ok, "Unimplemented String Ctx")
+		expectedType = ctx.ExpectedType()
 		var zero = constant.NewInt(types.I64, 0)
 		gep := constant.NewGetElementPtr(v2.Typ, strPtr, zero, zero)
 		gep.InBounds = true
+		if expectedType == "pointer<char>" {
+			return gep
+		}
 		alloc := c.currentBlock.NewAlloca(c.types["string"])
 		alloc.Align = 8
 		c.currentBlock.NewCall(c.getFunc("make_string"), alloc, gep)
@@ -858,8 +979,7 @@ func (c *Compiler) compileExpr(expr Expr) value.Value {
 		case Sizeof:
 			// TODO constant expressions must, we handle as statically to save day for now
 			resolvedType := c.resolveType(expr.Right)
-			var size = sizeof(resolvedType)
-			return constant.NewInt(types.I64, int64(size))
+			return c.callSizeOf(resolvedType)
 		case Mul:
 			addr := c.compileExpr(expr.Right)
 			load, ok := addr.(*ir.InstLoad)
@@ -877,7 +997,7 @@ func (c *Compiler) compileExpr(expr Expr) value.Value {
 		load, ok := left.(*ir.InstLoad)
 		Assert(ok, "assign_expr left operand is not loaded")
 		Assert(load.Src != nil, "assign_expr load.Src is nil")
-		if expr.StoreAlloca {
+		if c.isAssignable(expr.Context()) {
 			c.currentBlock.NewStore(right, load.Src)
 		} else {
 			c.memcpyInternal(load.Src, right)
@@ -889,10 +1009,27 @@ func (c *Compiler) compileExpr(expr Expr) value.Value {
 		zero := constant.NewInt(types.I64, 0)
 		leftInstLoad, ok := left.(*ir.InstLoad)
 		Assert(ok, "IndexExpr left operand is invalid.")
-		gep := c.currentBlock.NewGetElementPtr(leftInstLoad.ElemType, leftInstLoad.Src, zero, index)
-		arrayType, ok := leftInstLoad.ElemType.(*types.ArrayType)
-		Assert(ok, "Index operation cannot be used with non-array type")
-		return c.currentBlock.NewLoad(arrayType.ElemType, gep)
+
+		switch t := leftInstLoad.ElemType.(type) {
+		case *types.ArrayType:
+			gep := c.currentBlock.NewGetElementPtr(leftInstLoad.ElemType, leftInstLoad.Src, zero, index)
+			return c.currentBlock.NewLoad(t.ElemType, gep)
+		case *types.StructType:
+			if t.Name() == "string" {
+				bufferGep := c.currentBlock.NewGetElementPtr(leftInstLoad.ElemType, leftInstLoad.Src, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, 0))
+				loadCharPointer := c.currentBlock.NewLoad(types.NewPointer(types.I8), bufferGep)
+				gep := c.currentBlock.NewGetElementPtr(types.I8, loadCharPointer, index)
+				return c.currentBlock.NewLoad(types.I8, gep)
+			} else {
+				panic("Index operation cannot be used with non-array type")
+			}
+		case *types.PointerType:
+			gep := c.currentBlock.NewGetElementPtr(t.ElemType, leftInstLoad, index)
+			return c.currentBlock.NewLoad(t.ElemType, gep)
+		default:
+			panic("Index operation cannot be used with non-array type")
+		}
+
 	case *SelectorExpr:
 		sel := c.compileExpr(expr.Selector)
 		selLoad, ok := sel.(*ir.InstLoad)
