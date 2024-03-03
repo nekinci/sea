@@ -10,7 +10,6 @@ struct JsonNode {
     string key
     string value
     string type
-
     JsonNode* child
 }
 
