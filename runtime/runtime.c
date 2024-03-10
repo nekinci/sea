@@ -5,6 +5,8 @@
 #include <string.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <stdbool.h>
+#include <errno.h>
 
 #pragma clang diagnostic ignored "-Wvarargs"
 
@@ -15,6 +17,7 @@ typedef struct {
     size_t cap;
 } string;
 
+
 void* memcpy_internal(void* dest, const void* src, size_t sizeinbytes) {
     return memcpy(dest, src, sizeinbytes);
 }
@@ -24,7 +27,7 @@ string make_string(char* buffer) {
     string result;
     result.buffer = buffer;
     result.size = size;
-    result.cap = 5;
+    result.cap = 51;
     return result;
 }
 
@@ -82,7 +85,6 @@ int cba(int* x) {
 
 
 void* malloc_internal(size_t s) {
-    printf("%zu", s);
     return malloc(s);
 }
 
@@ -161,16 +163,21 @@ void doSomething(int* ptr) {
 }
 
 int main2() {
-char* abc = "abc";
-printf("%c\n", abc[0]);
     return 0;
 }
 
+
 void h_s(int signo) {
     printf("caught signal %d\n", signo);
-    exit(0);
+    exit(255);
 }
+
+void compare_string(string a, string b) {
+    puts_str(a);
+    puts_str(b);
+}
+
+
 void handle_signal() {
-printf("signal handler active\n");
-    signal(SIGINT, h_s);
+    signal(SIGSEGV, h_s);
 }

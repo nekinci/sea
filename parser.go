@@ -89,7 +89,7 @@ func (p *Parser) parse() (*Package, []Error) {
 }
 
 func (p *Parser) parseTypeIdentExpr() Expr {
-	expr := p.parseSelectorExpr(bracketType, false)
+	expr := p.parseSelectorExpr(bracketType)
 	if p.curTok == TokMultiply {
 		p.expect(TokMultiply)
 		return &RefTypeExpr{
@@ -118,9 +118,36 @@ func (p *Parser) parseVar() *VarDefStmt {
 	if p.curTok == TokAssign {
 		p.expect(TokAssign)
 		expr := p.parseExpr()
-		varDefStmt.Init = expr
+		varDefStmt.Init = p.parseObjLiteral(expr)
 	}
 	return varDefStmt
+}
+
+func (p *Parser) parseObjLiteral(expr Expr) Expr {
+	_, isCallExpr := expr.(*CallExpr)
+	if p.curTok == TokLBrace && !isCallExpr {
+		p.expect(TokLBrace)
+		objLit := &ObjectLitExpr{
+			Type:  expr,
+			start: p.startOfLastExpected(),
+		}
+		keyValues := make([]*KeyValueExpr, 0)
+		for p.curTok != TokRBrace {
+			kv := p.parseKeyValueExpr()
+			keyValues = append(keyValues, kv)
+			if p.curTok != TokComma {
+				break
+			} else {
+				p.expect(TokComma)
+			}
+		}
+		p.expect(TokRBrace)
+		objLit.KeyValue = keyValues
+		objLit.end = p.endOfLastExpected()
+		return objLit
+	}
+
+	return expr
 }
 
 func (p *Parser) parseIf() *IfStmt {
@@ -283,7 +310,7 @@ func (p *Parser) parseExprList() []Expr {
 	exprs := make([]Expr, 0)
 
 	for p.curTok != TokRParen {
-		expr := p.parseExpr()
+		expr := p.parseObjLiteral(p.parseExpr())
 		exprs = append(exprs, expr)
 		if p.curTok == TokComma {
 			p.expect(TokComma)
@@ -418,7 +445,7 @@ func (p *Parser) parseIdentExpr() *IdentExpr {
 	return expr
 }
 
-func (p *Parser) parseSelectorExpr(lbracketMode bracketMode, enterBrace bool) Expr {
+func (p *Parser) parseSelectorExpr(lbracketMode bracketMode) Expr {
 
 	var expr Expr = p.parseIdentExpr()
 	// a.b.c.d
@@ -481,30 +508,6 @@ func (p *Parser) parseSelectorExpr(lbracketMode bracketMode, enterBrace bool) Ex
 				panic("unreachable lbracket mode")
 			}
 		}
-	}
-
-	_, isCallExpr := expr.(*CallExpr)
-	// Is it fit in here?
-	if enterBrace && p.curTok == TokLBrace && !isCallExpr {
-		p.expect(TokLBrace)
-		objLit := &ObjectLitExpr{
-			Type:  expr,
-			start: p.startOfLastExpected(),
-		}
-		keyValues := make([]*KeyValueExpr, 0)
-		for p.curTok != TokRBrace {
-			kv := p.parseKeyValueExpr()
-			keyValues = append(keyValues, kv)
-			if p.curTok != TokComma {
-				break
-			} else {
-				p.expect(TokComma)
-			}
-		}
-		p.expect(TokRBrace)
-		objLit.KeyValue = keyValues
-		objLit.end = p.endOfLastExpected()
-		expr = objLit
 	}
 
 	return expr
@@ -585,7 +588,7 @@ func (p *Parser) parseSimpleExpr() Expr {
 		p.expect(TokRParen)
 		return &ParenExpr{Expr: expr, start: start, end: p.endOfLastExpected()}
 	case TokIdentifier:
-		var identExpr = p.parseSelectorExpr(bracketIndex, true)
+		var identExpr = p.parseSelectorExpr(bracketIndex)
 		if p.curTok == TokAssign {
 			return p.parseAssignExpr(identExpr)
 		}
@@ -593,7 +596,7 @@ func (p *Parser) parseSimpleExpr() Expr {
 	case TokMultiply:
 		p.expect(TokMultiply)
 		var start = p.startOfLastExpected()
-		expr := p.parseSelectorExpr(bracketIndex, true)
+		expr := p.parseSelectorExpr(bracketIndex)
 		expr = &UnaryExpr{Op: Mul, Right: expr, start: start}
 		var right Expr
 		if p.curTok == TokAssign {

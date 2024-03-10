@@ -5,46 +5,26 @@ extern fun string open_file_read(string path)
 extern fun i32 puts(char* str)
 extern fun i32 puts_str(string str)
 extern fun i32 puts_int(i32 a)
-
-struct JsonNode {
-    string key
-    string value
-    string type
-    JsonNode* child
-}
-
-struct JsonParser {
-    i32 position
-    string input
-}
-
-impl JsonParser {
-
-    fun i32 current_pos() {
-        return this.position
-    }
-
-}
-
-struct Deneme {
-    string a
-    string b
-    string c
-    string d
-}
-
 extern fun void handle_signal()
-fun void abc2() {
 
-    return
+extern fun void compare_string(string a, string b)
+
+fun void example(string a, string b) {
+    puts_str(a)
+    puts_str(b)
 }
+
 # main function
 fun i32 main(i32 arg) {
+ # handle_signal()
  # var string file = open_file_read("./example.json")
-  handle_signal()
-
-  for true {
-  }
-
+  var string a = "a"
+  var string b = "b"
+ # compare_string(a, b)
+  #strcmpe(a, b)
+  #puts_str(a)
+  #puts_str(b)
+  compare_string(a, b)
+  example(a, b)
   return 0
 }

@@ -11,6 +11,8 @@ import (
 	"strings"
 )
 
+var Target string
+
 func Assert(cond bool, msg string) {
 	if cond {
 		return
@@ -43,6 +45,7 @@ func main2() {
 func main() {
 	_ = os.Setenv("DEBUG", "")
 
+	Target = "arm64-apple-darwin23.1.0" // TODO
 	compiler := &Compiler{}
 
 	// read compileExpr from file

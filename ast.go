@@ -583,6 +583,21 @@ func (o *ObjectLitExpr) IsComplexLiteral() {}
 type KeyValueExpr struct {
 	Key   Expr
 	Value Expr
+	ctx   Ctx
+}
+
+func (kv *KeyValueExpr) setCtx(ctx Ctx) {
+	kv.ctx = ctx
+}
+
+func (kv *KeyValueExpr) GetCtx() Ctx {
+	return kv.ctx
+}
+
+func (kv *KeyValueExpr) Context() *VarAssignCtx {
+	ctx, ok := kv.ctx.(*VarAssignCtx)
+	Assert(ok, "expecting VarAssignCtx")
+	return ctx
 }
 
 func (kv *KeyValueExpr) IsExpr() {}

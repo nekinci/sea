@@ -590,7 +590,7 @@ func (c *Checker) checkFuncDef(stmt *FuncDefStmt) {
 		c.errorf(start, end, "Type %s is not defined", funcdef.Type)
 	} else {
 		ctx.expectedType = funcdef.Type
-		ctx.returnsStruct = typ.IsStruct
+		ctx.returnsStruct = typ.IsStruct && !c.isPointer(funcdef.Type)
 		ctx.returnTypeSym = typ
 	}
 
@@ -661,6 +661,7 @@ func (c *Checker) checkStmt(stmt Stmt) {
 	case *ExprStmt:
 		c.checkExprStmt(stmt)
 	case *ReturnStmt:
+		stmt.setCtx(c.ctx)
 		var exprType = "void"
 		if stmt.Value != nil {
 			var err error
@@ -669,7 +670,6 @@ func (c *Checker) checkStmt(stmt Stmt) {
 				return
 			}
 		}
-		stmt.setCtx(c.ctx)
 		if !c.checkTypeCompatibility(c.ctx.(*FuncCtx).expectedType, exprType) {
 			start, end := stmt.Value.Pos()
 			c.errorf(start, end, "expected %s, got %s", c.ctx.(*FuncCtx).expectedType, exprType)
@@ -799,6 +799,7 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 				if ctxter, ok := kv.Value.(Contexter); ok {
 					ctxter.setCtx(ctx)
 				}
+				kv.setCtx(ctx)
 				c.setVarAssignCtxFields(ctx, l, c.LookupSym(l).(*TypeDef))
 			}
 
@@ -1067,6 +1068,7 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 					if err == nil {
 						err = err2
 					}
+					c.leaveCtx()
 					continue
 				}
 
@@ -1163,7 +1165,7 @@ func (c *Checker) collectFuncSignature(stmt *FuncDefStmt, methodOf string) {
 	if methodOf != "" {
 		_ = c.addSymbol("this", &VarDef{
 			Name: "this",
-			Type: methodOf,
+			Type: fmt.Sprintf(pointerScheme, methodOf),
 		})
 	}
 
