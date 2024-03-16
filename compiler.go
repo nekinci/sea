@@ -47,20 +47,24 @@ type fieldIndexKey struct {
 }
 
 type Compiler struct {
-	module        *ir.Module
-	currentScope  *CompileScope
-	currentBlock  *ir.Block
-	breakBlock    *ir.Block
-	continueBlock *ir.Block
-	currentFunc   *ir.Func
-	currentType   types.Type
-	currentAlloc  *ir.InstAlloca
+	module       *ir.Module
+	currentScope *CompileScope
+	currentBlock *ir.Block
+	currentFunc  *ir.Func
+	currentType  types.Type
+	currentAlloc *ir.InstAlloca
 
 	funcs         map[string]*ir.Func
 	types         map[string]types.Type
 	typesIndexMap map[fieldIndexKey]int
 	globals       map[string]value.Value
 	pkg           *Package
+	sequence      int
+}
+
+func (c *Compiler) GetSequence() string {
+	c.sequence += 1
+	return fmt.Sprintf("%d", c.sequence)
 }
 
 func (c *Compiler) Define(name string, v value.Value) {
@@ -124,11 +128,33 @@ func (c *Compiler) initBuiltinTypes() {
 	c.types["f32"] = types.Float
 	c.types["f64"] = types.Double
 
+	sliceX := types.NewStruct(
+		types.NewPointer(types.NewPointer(types.I8)),
+		types.NewInt(64),
+		types.NewInt(64),
+	)
+	sliceDef := c.module.NewTypeDef("slice", sliceX)
+	c.types["slice"] = sliceDef
+
 	stringStruct := types.NewStruct(types.NewPointer(types.I8), types.I64, types.I64)
 	def := c.module.NewTypeDef("string", stringStruct)
 	c.types["string"] = def
 }
 
+func (c *Compiler) NewPassByValueParameter(name string, typ types.Type) *ir.Param {
+	param := ir.NewParam(name, types.NewPointer(typ))
+	param.Attrs = make([]ir.ParamAttribute, 0)
+	param.Attrs = append(param.Attrs, PassByValue{Typ: typ})
+	return param
+}
+
+func (c *Compiler) NewReturnParameter(name string, typ types.Type) *ir.Param {
+	param := ir.NewParam(name, types.NewPointer(typ))
+	param.Attrs = make([]ir.ParamAttribute, 0)
+	param.Attrs = append(param.Attrs, ir.SRet{Typ: typ})
+	param.Attrs = append(param.Attrs, enum.ParamAttrNoAlias)
+	return param
+}
 func (c *Compiler) initBuiltinFuncs() {
 	module := c.module
 
@@ -141,13 +167,34 @@ func (c *Compiler) initBuiltinFuncs() {
 	printfInternal.Linkage = enum.LinkageExternal
 	c.funcs["printf_internal"] = printfInternal
 
-	returnParam := ir.NewParam("", types.NewPointer(c.types["string"]))
-	returnParam.Attrs = make([]ir.ParamAttribute, 0)
-	returnParam.Attrs = append(returnParam.Attrs, enum.ParamAttrNoAlias)
-	returnParam.Attrs = append(returnParam.Attrs, ir.SRet{Typ: c.types["string"]})
-	makeString := module.NewFunc("make_string", c.types["void"], returnParam, ir.NewParam("buffer", types.NewPointer(types.I8)))
+	makeString := module.NewFunc("make_string", c.types["void"], c.NewReturnParameter("", c.types["string"]), ir.NewParam("buffer", types.NewPointer(types.I8)))
 	makeString.Linkage = enum.LinkageExternal
 	c.funcs["make_string"] = makeString
+
+	concatStrings := module.NewFunc("concat_strings", c.types["void"], c.NewReturnParameter("", c.types["string"]),
+		c.NewPassByValueParameter("strA", c.types["string"]),
+		c.NewPassByValueParameter("strB", c.types["string"]))
+	concatStrings.Linkage = enum.LinkageExternal
+	c.funcs["concat_strings"] = concatStrings
+
+	concatCharAndString := module.NewFunc("concat_char_and_string", c.types["void"],
+		c.NewReturnParameter("", c.types["string"]), ir.NewParam("", c.types["char"]),
+		c.NewPassByValueParameter("", c.types["string"]))
+	concatCharAndString.Linkage = enum.LinkageExternal
+	c.funcs["concat_char_and_string"] = concatCharAndString
+
+	concatStringAndChar := module.NewFunc("concat_string_and_char", c.types["void"],
+		c.NewReturnParameter("", c.types["string"]), c.NewPassByValueParameter("", c.types["string"]),
+		ir.NewParam("", c.types["char"]))
+	concatStringAndChar.Linkage = enum.LinkageExternal
+	c.funcs["concat_string_and_char"] = concatStringAndChar
+
+	concatCharAndChar := module.NewFunc("concat_char_and_char", c.types["void"],
+		c.NewReturnParameter("", c.types["string"]),
+		ir.NewParam("", c.types["char"]),
+		ir.NewParam("", c.types["char"]))
+	concatCharAndChar.Linkage = enum.LinkageExternal
+	c.funcs["concat_char_and_char"] = concatCharAndChar
 
 	scanfInternal := module.NewFunc("scanf_internal", types.I32, ir.NewParam("", c.types["string"]))
 	scanfInternal.Sig.Variadic = true
@@ -170,10 +217,25 @@ func (c *Compiler) initBuiltinFuncs() {
 	memcpyInternal.Linkage = enum.LinkageExternal
 	c.funcs["memcpy_internal"] = memcpyInternal
 
-	p1 := ir.NewParam("strA", types.NewPointer(c.types["string"]))
-	p1.Attrs = make([]ir.ParamAttribute, 0)
-	p1.Attrs = append(p1.Attrs, PassByValue{Typ: c.types["string"]})
+	compareString := module.NewFunc("compare_string", types.I1,
+		c.NewPassByValueParameter("", c.types["string"]),
+		c.NewPassByValueParameter("", c.types["string"]))
+	c.funcs["compare_string"] = compareString
 
+	makeSlice := module.NewFunc("make_slice", types.Void,
+		c.NewReturnParameter("returnVal", c.types["slice"]))
+	makeSlice.Linkage = enum.LinkageExternal
+	c.funcs["make_slice"] = makeSlice
+
+	accessSliceIndex := module.NewFunc("access_slice_data",
+		types.NewPointer(types.I8), c.NewPassByValueParameter("slice", c.types["slice"]), ir.NewParam("", types.I64))
+	accessSliceIndex.Linkage = enum.LinkageExternal
+	c.funcs["access_slice_data"] = accessSliceIndex
+
+	appendSliceData := module.NewFunc("append_slice_data",
+		types.Void, ir.NewParam("", types.NewPointer(c.types["slice"])), ir.NewParam("", types.NewPointer(types.I8)))
+	appendSliceData.Linkage = enum.LinkageExternal
+	c.funcs["append"] = appendSliceData
 }
 
 func (c *Compiler) resolveType(expr Expr) types.Type {
@@ -189,6 +251,9 @@ func (c *Compiler) resolveType(expr Expr) types.Type {
 		return types.NewPointer(typ)
 	case *ArrayTypeExpr:
 		typ := c.resolveType(expr.Type)
+		if expr.Size.(*NumberExpr).Value == -1 {
+			return c.types["slice"]
+		}
 		return types.NewArray(uint64(expr.Size.(*NumberExpr).Value), typ)
 	}
 
@@ -233,8 +298,12 @@ func (c *Compiler) compileVarDef(stmt *VarDefStmt) {
 			c.currentBlock.NewStore(right, ptr)
 
 		case *types.PointerType:
-			if !typ.Equal(right.Type()) || c.isNull(right) {
+			if c.isNull(right) {
 				cast := c.currentBlock.NewBitCast(right, typ)
+				c.currentBlock.NewStore(cast, ptr)
+			} else if !typ.Equal(right.Type()) {
+				load := c.currentBlock.NewLoad(types.NewPointer(typ.(*types.PointerType).ElemType), right)
+				cast := c.currentBlock.NewBitCast(load, typ)
 				c.currentBlock.NewStore(cast, ptr)
 			} else {
 				c.currentBlock.NewStore(right, ptr)
@@ -310,7 +379,7 @@ func (c *Compiler) compileFunc(def *FuncDefStmt, isMethod bool, thisType types.T
 			block := f.NewBlock(entryBlock)
 			c.currentBlock = block
 
-			if def.Context().returnsStruct {
+			if def.Context().returnsStruct || def.Context().ExpectedType() == "string" {
 				var returnParam *ir.Param
 				for _, p := range f.Params {
 					if p.Name() == "returnVal" {
@@ -359,7 +428,7 @@ func (c *Compiler) compileStmt(stmt Stmt) {
 		if innerStmt.Value == nil {
 			c.currentBlock.NewRet(nil)
 		} else {
-			if innerStmt.Context().returnsStruct {
+			if innerStmt.Context().returnsStruct || innerStmt.Context().ExpectedType() == "string" {
 				param := innerStmt.Context().returnParam
 				val := c.compileExpr(innerStmt.Value)
 				if _, ok := val.(*ir.InstAlloca); ok {
@@ -369,13 +438,22 @@ func (c *Compiler) compileStmt(stmt Stmt) {
 				}
 				c.currentBlock.NewRet(nil)
 			} else {
-				c.currentBlock.NewRet(c.compileExpr(innerStmt.Value))
+				val := c.compileExpr(innerStmt.Value)
+				// TODO pass type of pointer and return directly instead bit cast
+				if c.isNull(val) {
+					name := innerStmt.Context().returnTypeSym.TypeName()
+					typ := c.resolveType(&RefTypeExpr{Expr: &IdentExpr{Name: name}})
+					cast := c.currentBlock.NewBitCast(val, typ)
+					c.currentBlock.NewRet(cast)
+					return
+				}
+				c.currentBlock.NewRet(val)
 			}
 		}
 	case *BreakStmt:
-		c.currentBlock.NewBr(c.breakBlock)
+		c.currentBlock.NewBr(innerStmt.ctx.breakBlock)
 	case *ContinueStmt:
-		c.currentBlock.NewBr(c.continueBlock)
+		c.currentBlock.NewBr(innerStmt.ctx.continueBlock)
 	case *ExprStmt:
 		c.compileExpr(innerStmt.Expr)
 	case *IfStmt:
@@ -389,8 +467,16 @@ func (c *Compiler) compileStmt(stmt Stmt) {
 	case *StructDefStmt:
 		c.compileStructDef(innerStmt)
 	case *BlockStmt:
+		seenBreakingStmt := false
 		for _, innerStmt := range innerStmt.Stmts {
+			if seenBreakingStmt {
+				break
+			}
 			c.compileStmt(innerStmt)
+			switch innerStmt.(type) {
+			case *BreakStmt, *ContinueStmt, *ReturnStmt:
+				seenBreakingStmt = true
+			}
 		}
 	case *ImplStmt:
 		thisType := c.resolveType(innerStmt.Type)
@@ -420,7 +506,14 @@ func (c *Compiler) compileIfStmt(stmt *IfStmt) {
 
 	c.currentBlock.NewCondBr(cond, thenBlock, elseBlock)
 	c.currentBlock = thenBlock
+	c.currentScope = &CompileScope{
+		variables: make(map[string]value.Value),
+		Parent:    c.currentScope,
+		Children:  make([]*CompileScope, 0),
+		funcs:     make(map[string]*ir.Func),
+	}
 	c.compileStmt(stmt.Then)
+	c.currentScope = c.currentScope.Parent
 
 	if thenBlock.Term == nil {
 		thenBlock.NewBr(continueBlock)
@@ -428,7 +521,14 @@ func (c *Compiler) compileIfStmt(stmt *IfStmt) {
 
 	if stmt.Else != nil {
 		c.currentBlock = elseBlock
+		c.currentScope = &CompileScope{
+			variables: make(map[string]value.Value),
+			Parent:    c.currentScope,
+			Children:  make([]*CompileScope, 0),
+			funcs:     make(map[string]*ir.Func),
+		}
 		c.compileStmt(stmt.Else)
+		c.currentScope = c.currentScope.Parent
 	}
 
 	if c.currentBlock.Term == nil {
@@ -445,22 +545,34 @@ func (c *Compiler) compileIfStmt(stmt *IfStmt) {
 
 	initBlock -> condBlock ->  forBlock -> ifBlock -> continueBlock -> stepBlock -> condBlock
 							-> funcBlock
+
+
+	initBlock -> condBlock -> forBlock -> stepperBlock -> condBlock
+							-> parentBlockContinue
 */
 
 func (c *Compiler) compileForStmt(stmt *ForStmt) {
-	funcBlock := c.currentFunc.NewBlock("")
-	initBlock := c.currentFunc.NewBlock("")
-	forBlock := c.currentFunc.NewBlock("")
-	condBlock := c.currentFunc.NewBlock("")
-	stepBlock := c.currentFunc.NewBlock("")
 
-	c.continueBlock = condBlock
-	c.breakBlock = funcBlock
+	c.currentScope = &CompileScope{
+		variables: make(map[string]value.Value),
+		Parent:    c.currentScope,
+		Children:  make([]*CompileScope, 0),
+		funcs:     make(map[string]*ir.Func),
+	}
 
-	defer func() {
-		c.continueBlock = nil
-		c.breakBlock = nil
-	}()
+	defer func() { c.currentScope = c.currentScope.Parent }()
+
+	stmt.ctx.breakBlock = c.currentFunc.NewBlock("for_break_block_" + c.GetSequence())
+	initBlock := c.currentFunc.NewBlock("init_" + c.GetSequence())
+	forBlock := c.currentFunc.NewBlock("for_body_" + c.GetSequence())
+	condBlock := c.currentFunc.NewBlock("for_cond_" + c.GetSequence())
+	stepBlock := c.currentFunc.NewBlock("step_" + c.GetSequence())
+
+	stmt.ctx.forBlock = forBlock
+	stmt.ctx.condBlock = condBlock
+	stmt.ctx.stepBlock = stepBlock
+	stmt.ctx.initBlock = initBlock
+	stmt.ctx.continueBlock = condBlock
 
 	c.currentBlock.NewBr(initBlock)
 	c.currentBlock = initBlock
@@ -470,10 +582,10 @@ func (c *Compiler) compileForStmt(stmt *ForStmt) {
 	initBlock.NewBr(condBlock)
 
 	c.currentBlock = condBlock
-	condBlock.NewCondBr(c.compileExpr(stmt.Cond), forBlock, funcBlock)
+	condBlock.NewCondBr(c.compileExpr(stmt.Cond), forBlock, stmt.ctx.breakBlock)
 	if stmt.Step != nil {
 		c.currentBlock = stepBlock
-		c.continueBlock = stepBlock
+		stmt.ctx.continueBlock = stepBlock
 		c.compileExpr(stmt.Step)
 		stepBlock.NewBr(condBlock)
 	} else {
@@ -484,13 +596,13 @@ func (c *Compiler) compileForStmt(stmt *ForStmt) {
 
 	c.compileStmt(stmt.Body)
 	if c.currentBlock != forBlock && c.currentBlock.Term == nil {
-		c.currentBlock.NewBr(c.continueBlock)
+		c.currentBlock.NewBr(stmt.ctx.continueBlock)
 	}
 	if forBlock.Term == nil {
-		c.currentBlock.NewBr(c.continueBlock)
+		c.currentBlock.NewBr(stmt.ctx.continueBlock)
 	}
 
-	c.currentBlock = funcBlock
+	c.currentBlock = stmt.ctx.breakBlock
 }
 
 func (c *Compiler) getAlloca(name string) value.Value {
@@ -564,6 +676,28 @@ func (c *Compiler) primitiveCasting(funcName string, expr *CallExpr) value.Value
 
 }
 
+func (c *Compiler) customCall(expr *CallExpr) value.Value {
+	var funcName string
+	switch e := expr.Left.(type) {
+	case *IdentExpr:
+		funcName = e.Name
+	default:
+		panic("TODO handle custom call")
+	}
+
+	if funcName == "append" {
+		fun := c.funcs["append"]
+		p0 := c.compileExpr(expr.Args[0])
+		p1 := c.compileExpr(expr.Args[1])
+		a1 := c.currentBlock.NewAlloca(p1.Type())
+		c.currentBlock.NewStore(p1, a1)
+		c1 := c.currentBlock.NewBitCast(a1, types.NewPointer(types.I8))
+		return c.currentBlock.NewCall(fun, p0.(*ir.InstLoad).Src, c1)
+	} else {
+		panic("Unimplemented custom call")
+	}
+}
+
 func (c *Compiler) call(expr *CallExpr) value.Value {
 	b := c.currentBlock
 
@@ -594,12 +728,15 @@ func (c *Compiler) call(expr *CallExpr) value.Value {
 			if isMethodCall {
 				id = 1
 			}
-			param := fun.Params[id]
-			if len(param.Attrs) > 0 {
-				if _, ok := param.Attrs[0].(ir.SRet); ok {
-					alloc := c.currentBlock.NewAlloca(param.Type().(*types.PointerType).ElemType)
-					args = append(args, alloc)
-					returnVal = alloc
+
+			if id < len(fun.Params) {
+				param := fun.Params[id]
+				if len(param.Attrs) > 0 {
+					if _, ok := param.Attrs[0].(ir.SRet); ok {
+						alloc := c.currentBlock.NewAlloca(param.Type().(*types.PointerType).ElemType)
+						args = append(args, alloc)
+						returnVal = alloc
+					}
 				}
 			}
 		}
@@ -624,18 +761,21 @@ func (c *Compiler) call(expr *CallExpr) value.Value {
 			if isMethodCall {
 				idx += 1
 			}
-			param := fun.Params[idx]
-			if len(param.Attrs) > 0 {
 
-				if _, ok := param.Attrs[0].(PassByValue); ok {
-					if _, ok := arg.Type().(*types.PointerType); !ok {
-						alloca := c.currentBlock.NewAlloca(arg.Type())
-						c.memcpyInternal(alloca, arg.(*ir.InstLoad).Src)
-						arg = alloca
+			if idx < len(fun.Params) {
+				param := fun.Params[idx]
+				if len(param.Attrs) > 0 {
+
+					if _, ok := param.Attrs[0].(PassByValue); ok {
+						if _, ok := arg.Type().(*types.PointerType); !ok {
+							alloca := c.currentBlock.NewAlloca(arg.Type())
+							c.memcpyInternal(alloca, arg.(*ir.InstLoad).Src)
+							arg = alloca
+						}
+
 					}
-
+					//param.Attrs = slices.Delete(param.Attrs, 0, 1)
 				}
-				//param.Attrs = slices.Delete(param.Attrs, 0, 1)
 			}
 
 			args = append(args, arg)
@@ -770,7 +910,11 @@ func (c *Compiler) newObject(expr *ObjectLitExpr, alloc value.Value) value.Value
 			v2 := c.currentBlock.NewBitCast(v, c.resolveFieldType(t, int64(fieldIndex)))
 			c.currentBlock.NewStore(v2, gep)
 		} else {
-			gep := c.currentBlock.NewGetElementPtr(typ, alloc, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, int64(fieldIndex)))
+			var val = alloc
+			if _, ok := alloc.(*ir.InstAlloca).ElemType.(*types.PointerType); ok {
+				val = c.currentBlock.NewLoad(types.NewPointer(typ), alloc)
+			}
+			gep := c.currentBlock.NewGetElementPtr(typ, val, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, int64(fieldIndex)))
 			c.currentBlock.NewStore(v, gep)
 		}
 	}
@@ -833,17 +977,11 @@ func (c *Compiler) memcpyInternal(dest, src value.Value) value.Value {
 	return c.currentBlock.NewCall(f, a1, a2, sizeInBytes)
 }
 
-func (c *Compiler) mallocInternal(size uint64) value.Value {
+func (c *Compiler) mallocInternal(expr Expr) value.Value {
 	callExpr := &CallExpr{
 		Left: &IdentExpr{Name: "malloc_internal"},
 		Args: []Expr{
-			&NumberExpr{
-				Value: int64(size),
-				ctx: &VarAssignCtx{
-					parent:       nil,
-					expectedType: "i64",
-				},
-			},
+			expr,
 		},
 		end:      Pos{},
 		MethodOf: "",
@@ -853,13 +991,12 @@ func (c *Compiler) mallocInternal(size uint64) value.Value {
 	return c.call(callExpr)
 }
 
-func (c *Compiler) getSizeOf(expr Expr) uint64 {
+func (c *Compiler) getSizeOf(expr Expr) Expr {
 	switch expr := expr.(type) {
 	case *ObjectLitExpr:
-		return sizeof(c.resolveType(expr.Type))
+		return &UnaryExpr{Op: Sizeof, Right: expr.Type, start: expr.start}
 	case *IdentExpr:
-		val := c.Lookup(expr.Name)
-		return sizeof(val.Type())
+		return &UnaryExpr{Op: Sizeof, Right: expr, start: expr.start}
 	default:
 		panic("TODO")
 	}
@@ -887,6 +1024,54 @@ func (c *Compiler) isStorable(ctx *VarAssignCtx) bool {
 
 }
 
+func (c *Compiler) callCompareString(expr *BinaryExpr) value.Value {
+	callResult := c.call(&CallExpr{
+		Left: &IdentExpr{Name: "compare_string"},
+		Args: []Expr{
+			expr.Left,
+			expr.Right,
+		},
+	})
+	return generateOperation(c.currentBlock, callResult, constant.NewInt(types.I1, 1), expr.Op)
+}
+
+func (c *Compiler) callConcatString(expr *BinaryExpr) value.Value {
+	return c.call(&CallExpr{
+		Left: &IdentExpr{Name: "concat_strings"},
+		Args: []Expr{
+			expr.Left,
+			expr.Right,
+		},
+	})
+}
+
+func (c *Compiler) callConcatCharAndString(expr *BinaryExpr) value.Value {
+	return c.call(&CallExpr{
+		Left: &IdentExpr{Name: "concat_char_and_string"},
+		Args: []Expr{
+			expr.Left, expr.Right,
+		},
+	})
+}
+
+func (c *Compiler) callConcatStringAndChar(expr *BinaryExpr) value.Value {
+	return c.call(&CallExpr{
+		Left: &IdentExpr{Name: "concat_string_and_char"},
+		Args: []Expr{
+			expr.Left, expr.Right,
+		},
+	})
+}
+
+func (c *Compiler) callConcatCharAndChar(expr *BinaryExpr) value.Value {
+	return c.call(&CallExpr{
+		Left: &IdentExpr{Name: "concat_char_and_char"},
+		Args: []Expr{
+			expr.Left, expr.Right,
+		},
+	})
+}
+
 func (c *Compiler) compileExpr(expr Expr) value.Value {
 	switch expr := expr.(type) {
 	case *NilExpr:
@@ -900,15 +1085,60 @@ func (c *Compiler) compileExpr(expr Expr) value.Value {
 		case *VarAssignCtx:
 			arrayType = &ArrayTypeExpr{
 				Type: &IdentExpr{Name: ctx.extractedType},
-				Size: &NumberExpr{Value: int64(ctx.arraySize)},
+				Size: &NumberExpr{Value: -1},
 				end:  Pos{},
 			}
 		default:
 			panic("not implemented ctx for array lit")
 		}
 		typ := c.resolveType(arrayType)
-		return c.newArray(expr, typ)
+		if arrayType.Size.(*NumberExpr).Value == -1 {
+			alloc := c.currentBlock.NewAlloca(c.types["slice"])
+			c.currentBlock.NewCall(c.funcs["make_slice"], alloc)
+
+			for _, elem := range expr.Elems {
+				e := c.compileExpr(elem)
+				alloc2 := c.currentBlock.NewAlloca(e.Type())
+				c.currentBlock.NewStore(e, alloc2)
+				cast := c.currentBlock.NewBitCast(alloc2, types.NewPointer(types.I8))
+				c.currentBlock.NewCall(c.funcs["append"], alloc, cast)
+			}
+
+			return c.currentBlock.NewLoad(c.types["slice"], alloc)
+		} else {
+			return c.newArray(expr, typ)
+		}
+
 	case *BinaryExpr:
+
+		if expr.Ctx.IsRuntime {
+			info := expr.Ctx.OpInfo
+			if info.left == "string" && info.right == "string" {
+				if info.op == Eq || info.op == Neq {
+					return c.callCompareString(expr)
+				} else if info.op == Add {
+					return c.callConcatString(expr)
+				} else {
+					panic("Unsupported string operation")
+				}
+			}
+
+			if info.left == "char" && info.op == Add && info.right == "string" {
+				return c.callConcatCharAndString(expr)
+			}
+
+			if info.left == "string" && info.op == Add && info.right == "char" {
+				return c.callConcatStringAndChar(expr)
+			}
+
+			if info.left == "char" && info.op == Add && info.right == "char" && expr.Ctx.parentCtx().(ExpectedTypeCtx).ExpectedType() == "string" {
+				return c.callConcatCharAndChar(expr)
+			}
+
+			panic("Unimplemented runtime operation")
+
+		}
+
 		left := c.compileExpr(expr.Left)
 		right := c.compileExpr(expr.Right)
 		var v = left
@@ -919,30 +1149,19 @@ func (c *Compiler) compileExpr(expr Expr) value.Value {
 			}
 		}
 
-		lLoad, ok1 := left.(*ir.InstLoad)
-		rLoad, ok2 := right.(*ir.InstLoad)
-		if ok1 && ok2 && lLoad.ElemType.Name() == "string" && rLoad.ElemType.Name() == "string" {
-			return c.call(&CallExpr{
-				Left: &IdentExpr{Name: "compare_string"},
-				Args: []Expr{
-					expr.Left,
-					expr.Right,
-				},
-				end:      Pos{},
-				MethodOf: "",
-				TypeCast: false,
-				ctx:      nil,
-			})
-		}
-
 		return generateOperation(c.currentBlock, v, right, expr.Op)
 	case *NumberExpr:
 		ct := expr.GetCtx()
 		ctx, ok := ct.(ExpectedTypeCtx)
-		Assert(ok, "Unimplemented number type")
-		size := getBitSize(ctx.ExpectedType())
-		if size == -1 {
-			size = 32 // default
+		var size int
+		if ok {
+			Assert(ok, "Unimplemented number type")
+			size = getBitSize(ctx.ExpectedType())
+			if size == -1 {
+				size = 32 // default
+			}
+		} else {
+			size = 32
 		}
 		return constant.NewInt(types.NewInt(uint64(size)), expr.Value)
 	case *FloatExpr:
@@ -973,8 +1192,9 @@ func (c *Compiler) compileExpr(expr Expr) value.Value {
 		strPtr.UnnamedAddr = enum.UnnamedAddrUnnamedAddr
 		var expectedType = "string"
 		ctx, ok := expr.GetCtx().(ExpectedTypeCtx)
-		Assert(ok, "Unimplemented String Ctx")
-		expectedType = ctx.ExpectedType()
+		if ok {
+			expectedType = ctx.ExpectedType()
+		}
 		var zero = constant.NewInt(types.I64, 0)
 		gep := constant.NewGetElementPtr(v2.Typ, strPtr, zero, zero)
 		gep.InBounds = true
@@ -992,7 +1212,11 @@ func (c *Compiler) compileExpr(expr Expr) value.Value {
 		alloc := c.currentBlock.NewAlloca(t)
 		return c.newObject(expr, alloc)
 	case *CallExpr:
-		return c.call(expr)
+		if ct, ok := expr.GetCtx().(*CallCtx); ok && ct.isCustomCall {
+			return c.customCall(expr)
+		} else {
+			return c.call(expr)
+		}
 	case *IdentExpr:
 		v := c.getAlloca(expr.Name)
 		switch v := v.(type) {
@@ -1023,17 +1247,23 @@ func (c *Compiler) compileExpr(expr Expr) value.Value {
 		switch expr.Op {
 		case Sub:
 			right := c.compileExpr(expr.Right)
-			return c.currentBlock.NewMul(constant.NewInt(types.I32, -1), right)
+			return c.currentBlock.NewMul(constant.NewInt(right.Type().(*types.IntType), -1), right)
 		case Band:
 			switch e := expr.Right.(type) {
 			case *ObjectLitExpr:
 				size := c.getSizeOf(expr.Right)
 				allocation := c.mallocInternal(size)
-				x := c.currentBlock.NewBitCast(allocation, types.NewPointer(c.resolveType(e.Type)))
-				val := c.newObject(e, x)
-				return val
+				typ := c.resolveType(e.Type)
+				bitcast := c.currentBlock.NewBitCast(allocation, types.NewPointer(typ))
+				var alloc = c.currentBlock.NewAlloca(types.NewPointer(typ))
+				c.currentBlock.NewStore(bitcast, alloc)
+				val := c.newObject(e, alloc)
+				return c.currentBlock.NewLoad(types.NewPointer(typ), val)
 			case *IdentExpr:
 				return c.getAlloca(e.Name)
+			case *SelectorExpr:
+				gep := c.compileSelectorExpr(e)
+				return gep.(*ir.InstLoad).Src
 			default:
 				panic("Unhandled assignment case")
 			}
@@ -1049,6 +1279,9 @@ func (c *Compiler) compileExpr(expr Expr) value.Value {
 			Assert(ok, "* operator must have combined with pointer")
 			elemType := typ.ElemType
 			return c.currentBlock.NewLoad(elemType, addr)
+		case Not:
+			right := c.compileExpr(expr.Right)
+			return generateOperation(c.currentBlock, right, constant.NewInt(types.I1, 1), Xor)
 		default:
 			panic("Unreachable unary expression op = " + expr.Op.String())
 		}
@@ -1058,10 +1291,14 @@ func (c *Compiler) compileExpr(expr Expr) value.Value {
 		load, ok := left.(*ir.InstLoad)
 		Assert(ok, "assign_expr left operand is not loaded")
 		Assert(load.Src != nil, "assign_expr load.Src is nil")
-		if !c.isStorable(expr.Context()) {
+		if c.isStorable(expr.Context()) {
 			c.currentBlock.NewStore(right, load.Src)
 		} else {
-			c.memcpyInternal(load.Src, right)
+			var r = right
+			if r2, ok := right.(*ir.InstLoad); ok {
+				r = r2.Src
+			}
+			c.memcpyInternal(load.Src, r)
 		}
 		return left
 	case *IndexExpr:
@@ -1081,6 +1318,17 @@ func (c *Compiler) compileExpr(expr Expr) value.Value {
 				loadCharPointer := c.currentBlock.NewLoad(types.NewPointer(types.I8), bufferGep)
 				gep := c.currentBlock.NewGetElementPtr(types.I8, loadCharPointer, index)
 				return c.currentBlock.NewLoad(types.I8, gep)
+			} else if t.Name() == "slice" {
+				data := c.call(&CallExpr{
+					Left: &IdentExpr{Name: "access_slice_data"},
+					Args: []Expr{
+						expr.Left,
+						expr.Index,
+					},
+				})
+				baseType := expr.ctx.sourceBaseType
+				cast := c.currentBlock.NewBitCast(data, types.NewPointer(c.types[baseType]))
+				return c.currentBlock.NewLoad(c.types[baseType], cast)
 			} else {
 				panic("Index operation cannot be used with non-array type")
 			}
@@ -1092,30 +1340,34 @@ func (c *Compiler) compileExpr(expr Expr) value.Value {
 		}
 
 	case *SelectorExpr:
-		var selRes value.Value
-		sel := c.compileExpr(expr.Selector)
-		selRes = sel
-		if sel, ok := sel.(*ir.InstAlloca); ok {
-			selRes = c.currentBlock.NewLoad(sel.ElemType, sel)
-		}
-		selLoad, ok := selRes.(*ir.InstLoad)
-		Assert(ok, "Selector invalid")
-		if s, ok := selLoad.ElemType.(*types.PointerType); ok {
-			selLoad = c.currentBlock.NewLoad(s.ElemType, selLoad)
-		}
-		zero := constant.NewInt(types.I32, 0)
-		typName := selRes.Type().Name()
-		if t, ok := selRes.Type().(*types.PointerType); ok {
-			typName = t.ElemType.Name()
-		}
-		fieldIndex, err := c.resolveFieldIndex(expr.Ident.(*IdentExpr).Name, typName)
-		AssertErr(err)
-		idx := constant.NewInt(types.I32, int64(fieldIndex))
-		gep := c.currentBlock.NewGetElementPtr(selLoad.ElemType, selLoad.Src, zero, idx)
-		return c.currentBlock.NewLoad(c.getIndexedType(selLoad, fieldIndex), gep)
+		return c.compileSelectorExpr(expr)
 	default:
 		panic("unreachable")
 	}
+}
+
+func (c *Compiler) compileSelectorExpr(expr *SelectorExpr) value.Value {
+	var selRes value.Value
+	sel := c.compileExpr(expr.Selector)
+	selRes = sel
+	if sel, ok := sel.(*ir.InstAlloca); ok {
+		selRes = c.currentBlock.NewLoad(sel.ElemType, sel)
+	}
+	selLoad, ok := selRes.(*ir.InstLoad)
+	Assert(ok, "Selector invalid")
+	if s, ok := selLoad.ElemType.(*types.PointerType); ok {
+		selLoad = c.currentBlock.NewLoad(s.ElemType, selLoad)
+	}
+	zero := constant.NewInt(types.I32, 0)
+	typName := selRes.Type().Name()
+	if t, ok := selRes.Type().(*types.PointerType); ok {
+		typName = t.ElemType.Name()
+	}
+	fieldIndex, err := c.resolveFieldIndex(expr.Ident.(*IdentExpr).Name, typName)
+	AssertErr(err)
+	idx := constant.NewInt(types.I32, int64(fieldIndex))
+	gep := c.currentBlock.NewGetElementPtr(selLoad.ElemType, selLoad.Src, zero, idx)
+	return c.currentBlock.NewLoad(c.getIndexedType(selLoad, fieldIndex), gep)
 }
 
 type Operation int
@@ -1137,6 +1389,7 @@ const (
 	Band
 	Or
 	Sizeof
+	Xor
 )
 
 func (o Operation) String() string {
@@ -1253,6 +1506,8 @@ func generateOperation(block *ir.Block, value1, value2 value.Value, op Operation
 		return block.NewAnd(value1, value2)
 	case Or:
 		return block.NewOr(value1, value2)
+	case Xor:
+		return block.NewXor(value1, value2)
 	default:
 		panic("unhandled default case")
 	}

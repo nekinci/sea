@@ -270,7 +270,7 @@ func (l *Lexer) tok() Token {
 		return TokNumber
 	case c == '"':
 		first := true
-		for l.pos < l.inputLen && (l.input[l.pos] != '"' || first) {
+		for l.pos < l.inputLen && ((l.pos > 0 && l.input[l.pos-1] == '\\') || (l.input[l.pos] != '"' || first)) {
 			l.pos += 1
 			l.col++
 			first = false

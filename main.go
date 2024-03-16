@@ -44,7 +44,6 @@ func main2() {
 
 func main() {
 	_ = os.Setenv("DEBUG", "")
-
 	Target = "arm64-apple-darwin23.1.0" // TODO
 	compiler := &Compiler{}
 
@@ -93,7 +92,6 @@ func main() {
 		panic(err)
 	}
 	clangCompile(outputPath, "./runtime/runtime.c", true, true)
-
 }
 
 func clangCompile(path, runtimePath string, runBinary bool, outputForwarding bool) {

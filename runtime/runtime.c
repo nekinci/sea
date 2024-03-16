@@ -17,6 +17,39 @@ typedef struct {
     size_t cap;
 } string;
 
+typedef struct {
+   char** data_list;
+   size_t size;
+   size_t cap;
+} slice;
+
+slice make_slice() {
+    slice s;
+    s.cap = 2;
+    s.size = 0;
+    s.data_list = malloc(sizeof(char*) * s.cap);
+    return s;
+}
+
+void append_slice_data(slice* s, char* data) {
+    if (s -> size >= s -> cap) {
+        s -> cap *= 2;
+        s -> data_list = realloc(s -> data_list, sizeof(char*) * s -> cap);
+    }
+
+    *(s -> data_list + s -> size) = data;
+    s -> size++;
+}
+
+char* access_slice_data(slice s, int index) {
+    if (index >= s.size) {
+        printf("Index out of bound error occurred: %d, slice size is: %zu", index, s.size);
+        exit(255);
+    }
+
+    char** data = (char**)(s.data_list + index);
+    return *data;
+}
 
 void* memcpy_internal(void* dest, const void* src, size_t sizeinbytes) {
     return memcpy(dest, src, sizeinbytes);
@@ -172,11 +205,54 @@ void h_s(int signo) {
     exit(255);
 }
 
-void compare_string(string a, string b) {
-    puts_str(a);
-    puts_str(b);
+
+int compare_string(string a, string b) {
+    if (a.size != b.size) return 0;
+    int res = strcmp(a.buffer, b.buffer);
+    return res == 0;
 }
 
+string concat_strings(string a, string b) {
+
+   // printf("a: %s %zu, b: %s %zu\n", a.buffer, a.size, b.buffer, b.size);
+    size_t len = a.size + b.size;
+    string res;
+    res.size = len;
+    char* newStr = malloc(sizeof(char) * len);
+    memcpy(newStr, a.buffer, a.size);
+    memcpy(newStr + a.size, b.buffer, b.size);
+    res.buffer = newStr;
+
+    res.cap = 100; // TODO
+    return res;
+}
+
+string concat_char_and_string(char c, string second) {
+    char* cbuff = malloc(sizeof(char));
+    *cbuff = c;
+    string first = make_string(cbuff);
+    return concat_strings(first, second);
+}
+
+string concat_string_and_char(string first, char c) {
+    char* cbuff = malloc(sizeof(char));
+    *cbuff = c;
+    string second = make_string(cbuff);
+    return concat_strings(first, second);
+}
+
+string concat_char_and_char(char first, char second) {
+    char* fbuff = malloc(sizeof(char));
+    *fbuff = first;
+    char* sbuff = malloc(sizeof(char));
+    *sbuff = second;
+
+    return concat_strings(make_string(fbuff), make_string(sbuff));
+}
+
+int str_len(string str) {
+    return str.size;
+}
 
 void handle_signal() {
     signal(SIGSEGV, h_s);

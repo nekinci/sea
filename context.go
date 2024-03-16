@@ -37,6 +37,7 @@ type VarAssignCtx struct {
 	typSym        *TypeDef
 	isPointer     bool
 	isArray       bool
+	isSlice       bool
 	extractedType string
 
 	// compiler side fields
@@ -53,6 +54,7 @@ func (v *VarAssignCtx) parentCtx() Ctx {
 
 type CallCtx struct {
 	parent        Ctx
+	isCustomCall  bool
 	returnsStruct bool
 }
 
@@ -61,14 +63,47 @@ func (c *CallCtx) parentCtx() Ctx {
 }
 
 type IndexCtx struct {
-	parent       Ctx
-	expectedType string
+	parent         Ctx
+	expectedType   string
+	sourceBaseType string
 }
 
-func (i IndexCtx) parentCtx() Ctx {
+func (i *IndexCtx) parentCtx() Ctx {
 	return i.parent
 }
 
-func (i IndexCtx) ExpectedType() string {
+func (i *IndexCtx) ExpectedType() string {
 	return i.expectedType
+}
+
+type BinaryExprCtx struct {
+	parent       Ctx
+	IsRuntime    bool
+	OpInfo       operationInfo
+	expectedType string
+	ResultType   string
+}
+
+func (b *BinaryExprCtx) ExpectedType() string {
+	return b.expectedType
+}
+
+func (b *BinaryExprCtx) parentCtx() Ctx {
+	return b.parent
+}
+
+type ForCtx struct {
+	parent Ctx
+
+	// compiler side
+	continueBlock *ir.Block
+	initBlock     *ir.Block
+	forBlock      *ir.Block
+	condBlock     *ir.Block
+	stepBlock     *ir.Block
+	breakBlock    *ir.Block
+}
+
+func (f *ForCtx) parentCtx() Ctx {
+	return f.parent
 }

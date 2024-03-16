@@ -8,9 +8,11 @@ import (
 )
 
 const arrayScheme = "array<%s, %d>"
+const sliceScheme = "slice<%s>"
 const pointerScheme = "pointer<%s>"
 const unresolvedType = "<unresolved>"
 const autoCastScheme = "auto_cast<%s>"
+const contextScheme = "context_based<%s,...>"
 
 type Symbol interface {
 	IsSymbol()
@@ -27,9 +29,10 @@ type TypeField struct {
 }
 
 type Param struct {
-	Param *ParamExpr
-	Name  string
-	Type  string
+	Param               *ParamExpr
+	Name                string
+	Type                string
+	GenericTypeResolver bool
 }
 
 type TypeDef struct {
@@ -39,6 +42,7 @@ type TypeDef struct {
 	Methods   []any
 	Completed bool
 	IsStruct  bool
+	IsBuiltin bool
 }
 
 func (t *TypeDef) TypeName() string {
@@ -74,21 +78,29 @@ func (v *VarDef) IsSymbol()       {}
 func (v *VarDef) IsVarDef() bool  { return true }
 func (v *VarDef) IsTypeDef() bool { return false }
 func (v *VarDef) IsFuncDef() bool { return false }
-func (v *VarDef) Pos() (Pos, Pos) { return v.DefNode.Pos() }
+func (v *VarDef) Pos() (Pos, Pos) {
+	if v.DefNode != nil {
+		return v.DefNode.Pos()
+	}
+
+	return Pos{}, Pos{}
+}
 func (v *VarDef) TypeName() string {
 	return v.Type
 }
 
 type FuncDef struct {
-	DefNode   *FuncDefStmt
-	Name      string
-	Type      string // indicates return type
-	Params    []Param
-	MethodOf  string
-	External  bool
-	Variadic  bool
-	Completed bool
-	TypeCast  bool
+	DefNode     *FuncDefStmt
+	Name        string
+	Type        string // indicates return type
+	Params      []Param
+	MethodOf    string
+	External    bool
+	Variadic    bool
+	Completed   bool
+	TypeCast    bool
+	CheckParams bool
+	GenericType string
 }
 
 func (f *FuncDef) TypeName() string {
@@ -235,9 +247,10 @@ func (c *Checker) initGlobalScope() {
 			Name:  "fmt",
 			Type:  "pointer<char>",
 		}},
-		External:  true,
-		Variadic:  true,
-		Completed: false,
+		External:    true,
+		Variadic:    true,
+		Completed:   false,
+		CheckParams: true,
 	})
 	AssertErr(err)
 	err = c.addSymbol("scanf_internal", &FuncDef{
@@ -249,9 +262,10 @@ func (c *Checker) initGlobalScope() {
 			Name:  "fmt",
 			Type:  "string",
 		}},
-		External:  true,
-		Variadic:  true,
-		Completed: false,
+		External:    true,
+		Variadic:    true,
+		Completed:   false,
+		CheckParams: true,
 	})
 	AssertErr(err)
 
@@ -264,12 +278,31 @@ func (c *Checker) initGlobalScope() {
 			Name:  "size",
 			Type:  "i64",
 		}},
-		External:  true,
-		Variadic:  false,
-		Completed: true,
-		TypeCast:  false,
+		External:    true,
+		Variadic:    false,
+		Completed:   true,
+		TypeCast:    false,
+		CheckParams: true,
 	})
 	AssertErr(err)
+	err = c.addSymbol("append", &FuncDef{
+		Name: "append",
+		Type: "void",
+		Params: []Param{
+			{
+				Name:                "list",
+				Type:                "slice<!T>",
+				GenericTypeResolver: true,
+			},
+			{
+				Name: "value",
+				Type: "!T",
+			},
+		},
+		External:    true,
+		Completed:   true,
+		GenericType: "!T",
+	})
 }
 
 func (scope *Scope) LookupSym(name string) Symbol {
@@ -320,8 +353,11 @@ func (c *Checker) getNameOfType(expr Expr) string {
 			default:
 				panic("Unhandled size")
 			}
+			return fmt.Sprintf(arrayScheme, c.getNameOfType(expr.Type), size)
+		} else {
+			expr.Size = &NumberExpr{Value: -1}
+			return fmt.Sprintf(sliceScheme, c.getNameOfType(expr.Type))
 		}
-		return fmt.Sprintf(arrayScheme, c.getNameOfType(expr.Type), size)
 	default:
 		panic("unreachable")
 	}
@@ -375,7 +411,7 @@ func (c *Checker) checkStructDef(stmt *StructDefStmt) {
 			c.errorf(start, end, "type %s is not defined", field.Type)
 		}
 
-		if fieldType != nil && fieldType.TypeName() == stmt.Name.Name && !c.isPointer(field.Type) {
+		if fieldType != nil && fieldType.TypeName() == stmt.Name.Name && !c.isPointer(field.Type) && !c.isSlice(field.Type) {
 			start, end := stmt.Pos()
 			c.errorf(start, end, "invalid recursive type %s. you may consider change field type like this: %s*", stmt.Name.Name, stmt.Name.Name)
 		}
@@ -408,6 +444,36 @@ func (c *Checker) extractType(name string) string {
 		s = strings.TrimSuffix(s, ">")
 		s = strings.TrimSuffix(s, ",")
 		return s
+	} else if strings.HasPrefix(name, "context_based<") {
+		if c.ctx == nil {
+			return unresolvedType
+		}
+
+		if _, ok := c.ctx.(ExpectedTypeCtx); !ok {
+			return unresolvedType
+		}
+
+		var s = strings.Replace(name, "context_based<", "", 1)
+		s = strings.Replace(s, ">", "", 1)
+		var typeList []string
+		typeList = strings.Split(s, ",")
+		var first string
+		for i, typ := range typeList {
+			typ = strings.TrimSpace(typ)
+			if i == 0 {
+				first = typ
+			}
+			if c.ctx.(ExpectedTypeCtx).ExpectedType() == typ {
+				return typ
+			}
+		}
+
+		return first
+	} else if strings.HasPrefix(name, "slice<") {
+		var s string
+		fmt.Sscanf(name, sliceScheme, &s)
+		s = strings.TrimSuffix(s, ">")
+		return s
 	}
 
 	return name
@@ -431,6 +497,10 @@ func (c *Checker) getArraySizeFromTypeStr(typ string) int {
 
 func (c *Checker) isArray(name string) bool {
 	return strings.HasPrefix(name, "array<")
+}
+
+func (c *Checker) isSlice(name string) bool {
+	return strings.HasPrefix(name, "slice<")
 }
 
 func (c *Checker) checkTypeCompatibility(typ1, exprType string) bool {
@@ -462,6 +532,14 @@ func (c *Checker) checkTypeCompatibility(typ1, exprType string) bool {
 
 	}
 
+	if c.isSlice(typ1) && c.isSlice(exprType) {
+		typ1Base := c.extractBaseType(typ1)
+		exprTypeBase := c.extractBaseType(exprType)
+		if typ1Base != exprTypeBase {
+			return false
+		}
+	}
+
 	return typ1 == exprType
 }
 
@@ -471,13 +549,13 @@ func getBitSize(typName string) int {
 		return 32
 	} else if typName == "i16" || typName == "f16" {
 		return 16
-	} else if typName == "i8" {
+	} else if typName == "i8" || typName == "char" {
 		return 8
 	} else if typName == "f64" || typName == "i64" {
 		return 64
 	}
 
-	return -1
+	return 64
 }
 
 // extractBaseType extracts type until base type
@@ -489,6 +567,8 @@ func (c *Checker) extractBaseType(name string) string {
 		return c.extractType(c.extractType(name))
 	} else if strings.HasPrefix(name, "array<") {
 		return c.extractType(c.extractType(name))
+	} else if strings.HasPrefix(name, "slice<") {
+		return c.extractType(c.extractType(name))
 	}
 
 	// it is already unwrapped so
@@ -498,11 +578,22 @@ func (c *Checker) extractBaseType(name string) string {
 func (c *Checker) fixVarDefStmt(stmt *VarDefStmt, l, r string, ctx *VarAssignCtx) {
 	if c.isArray(l) && c.isArray(r) {
 		if c.getArraySizeFromTypeStr(l) == -1 {
-			stmt.Type.(*ArrayTypeExpr).Size = &NumberExpr{Value: int64(c.getArraySizeFromTypeStr(r))}
+			ctx.arraySize = -1
+			stmt.Type.(*ArrayTypeExpr).Size = &NumberExpr{Value: -1}
+		} else {
+			ctx.arraySize = c.getArraySizeFromTypeStr(r)
 		}
 
-		stmt.Init.(*ArrayLitExpr).setCtx(ctx)
-		ctx.arraySize = c.getArraySizeFromTypeStr(r)
+		if alit, ok := stmt.Init.(*ArrayLitExpr); ok {
+			alit.setCtx(ctx)
+		}
+	} else if c.isSlice(l) && c.isSlice(r) {
+		ctx.arraySize = -1
+		ctx.isSlice = true
+		stmt.Type.(*ArrayTypeExpr).Size = &NumberExpr{Value: -1}
+		if alit, ok := stmt.Init.(*ArrayLitExpr); ok {
+			alit.setCtx(ctx)
+		}
 	}
 }
 
@@ -519,6 +610,7 @@ func (c *Checker) checkVarDef(stmt *VarDefStmt) {
 	ctx := &VarAssignCtx{
 		parent:       c.ctx,
 		expectedType: typName,
+		isSlice:      c.isSlice(typName),
 	}
 
 	c.newCtx(ctx)
@@ -670,9 +762,14 @@ func (c *Checker) checkStmt(stmt Stmt) {
 				return
 			}
 		}
-		if !c.checkTypeCompatibility(c.ctx.(*FuncCtx).expectedType, exprType) {
-			start, end := stmt.Value.Pos()
-			c.errorf(start, end, "expected %s, got %s", c.ctx.(*FuncCtx).expectedType, exprType)
+		if !c.checkTypeCompatibility(stmt.Context().expectedType, exprType) {
+			var start, end Pos
+			if stmt.Value != nil {
+				start, end = stmt.Value.Pos()
+			} else {
+				start, end = stmt.Pos()
+			}
+			c.errorf(start, end, "expected %s, got %s", getFuncCtx(c.ctx).expectedType, exprType)
 		}
 	case *IfStmt:
 		l, err := c.checkExpr(stmt.Cond)
@@ -684,16 +781,73 @@ func (c *Checker) checkStmt(stmt Stmt) {
 			c.errorf(start, end, "condition type is invalid, expected: %s, got: %s", "bool", l)
 		}
 
+		c.EnterScope()
 		c.checkStmt(stmt.Then)
+		c.CloseScope()
 		if stmt.Else != nil {
+			c.EnterScope()
 			c.checkStmt(stmt.Else)
+			c.CloseScope()
 		}
 
 	case *ForStmt:
-		// TODO
-		c.checkStmt(stmt.Body)
-		//Assert(false, "implement me")
+		c.newCtx(&ForCtx{parent: c.ctx})
+		defer c.leaveCtx()
+		c.EnterScope()
+		defer c.CloseScope()
+		if stmt.Init != nil {
+			c.checkStmt(stmt.Init)
+		}
+		stmt.ctx = c.ctx.(*ForCtx)
 
+		if stmt.Cond != nil {
+			cond, err := c.checkExpr(stmt.Cond)
+			if err != nil {
+				return
+			}
+
+			if cond != "bool" {
+				return
+			}
+		}
+
+		if stmt.Step != nil {
+			_, err := c.checkExpr(stmt.Step)
+			if err != nil {
+				start, end := stmt.Cond.Pos()
+				c.errorf(start, end, "invalid for condition")
+				return
+			}
+		}
+
+		c.checkStmt(stmt.Body)
+	//Assert(false, "implement me")
+	case *BreakStmt:
+		if c.ctx == nil {
+			start, end := stmt.Pos()
+			c.errorf(start, end, "invalid break statement")
+			return
+		}
+
+		if _, ok := c.ctx.(*ForCtx); !ok {
+			start, end := stmt.Pos()
+			c.errorf(start, end, "invalid break statement")
+			return
+		}
+		stmt.ctx = c.ctx.(*ForCtx)
+	case *ContinueStmt:
+		if c.ctx == nil {
+			start, end := stmt.Pos()
+			c.errorf(start, end, "invalid continue statement")
+			return
+		}
+
+		if _, ok := c.ctx.(*ForCtx); !ok {
+			start, end := stmt.Pos()
+			c.errorf(start, end, "invalid continue statement")
+			return
+		}
+		stmt.ctx = c.ctx.(*ForCtx)
 	default:
 		panic("Unhandled")
 
@@ -704,13 +858,85 @@ func isNumber(t string) bool {
 	return t == "i8" || t == "i16" || t == "i32" || t == "i64" || t == "f16" || t == "f32" || t == "f64"
 }
 
+type TypeInfo struct {
+	child *TypeInfo
+	name  string
+	typ   string
+	size  int
+}
+
+func (c *Checker) typeTree(t string) *TypeInfo {
+
+	if c.isSlice(t) {
+		t1 := c.extractType(t)
+		return &TypeInfo{typ: "slice", name: t, child: c.typeTree(t1)}
+	} else if c.isArray(t) {
+		extractType := c.extractType(t)
+		return &TypeInfo{typ: "array", name: t, child: c.typeTree(extractType), size: c.getArraySizeFromTypeStr(t)}
+	} else if c.isPointer(t) {
+		s := c.extractType(t)
+		return &TypeInfo{typ: "pointer", name: t, child: c.typeTree(s)}
+	}
+
+	return &TypeInfo{typ: "base", name: t}
+}
+
+func findDepth(tree *TypeInfo, genericType string, i int) int {
+	if tree.name == genericType {
+		return i
+	}
+
+	if tree.child == nil {
+		return -1
+	}
+
+	return findDepth(tree.child, genericType, i+1)
+}
+
+func findDepthValue(tree *TypeInfo, depth int) *TypeInfo {
+
+	if tree == nil {
+		return nil
+	}
+
+	if depth == 0 {
+		return tree
+	}
+
+	if tree.child != nil {
+		return findDepthValue(tree.child, depth-1)
+	}
+
+	return nil
+}
+
+func (c *Checker) resolveGenericArgType(funcDef *FuncDef, param Param, right string) string {
+
+	genericType := funcDef.GenericType
+	var resolvedTree *TypeInfo
+
+	if param.GenericTypeResolver {
+		paramTypTree := c.typeTree(param.Type)
+		depth := findDepth(paramTypTree, genericType, 0)
+
+		rightTree := c.typeTree(right)
+		resolvedTree = findDepthValue(rightTree, depth)
+	}
+
+	if resolvedTree == nil {
+		return genericType
+	}
+
+	return resolvedTree.name
+}
+
 // checkExpr checks expr and returns its type and error if it exists
 func (c *Checker) checkExpr(expr Expr) (string, error) {
 	switch expr := expr.(type) {
 	case *NumberExpr:
 		expr.setCtx(c.ctx)
 		if ctx, ok := c.ctx.(ExpectedTypeCtx); ok {
-			return "i" + strconv.Itoa(getBitSize(ctx.ExpectedType())), nil
+			return "i" + strconv.Itoa(getBitSize(c.extractBaseType(ctx.ExpectedType()))), nil
 		}
 		return "i" + strconv.Itoa(64), nil
 	case *FloatExpr:
@@ -746,6 +972,10 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 					c.errorf(start, end, "expected %s, got %s", firstType, elemType)
 				}
 			}
+		}
+
+		if c.ctx.(*VarAssignCtx).isSlice {
+			return fmt.Sprintf(sliceScheme, firstType), nil
 		}
 		return fmt.Sprintf(arrayScheme, firstType, len(expr.Elems)), nil
 	case *ObjectLitExpr:
@@ -789,6 +1019,7 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 			ctx.arraySize = c.getArraySizeFromTypeStr(l)
 			r, err := c.checkExpr(kv.Value)
 			if err != nil {
+				c.leaveCtx()
 				continue
 			}
 
@@ -819,23 +1050,26 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 			return right, err
 		}
 
-		// TODO compability cases
-
-		switch expr.Op {
-		case Add, Sub, Mul, Div, Mod:
-		case Band:
-		case Eq, Neq, Lt, Lte, Gt, Gte, Not, And, Or:
-			return "bool", nil
+		expr.Ctx = &BinaryExprCtx{
+			parent:    c.ctx,
+			IsRuntime: (left == "string" && right == "string") || (left == "string" && right == "char") || (left == "char" && right == "string") || (left == "char" && right == "char" && (expr.Op != Eq && expr.Op != Neq) && c.ctx.(ExpectedTypeCtx).ExpectedType() == "string"),
+			OpInfo:    operationInfo{left, expr.Op, right},
 		}
 
-		if left != right {
+		if v, ok := validOps[operationInfo{left, expr.Op, right}]; ok {
+			v = c.extractType(v)
+			expr.Ctx.ResultType = v
+			return v, nil
+		} else {
+			if v2, ok := validOps[operationInfo{"*", expr.Op, "*"}]; ok {
+				v2 = c.extractType(v2)
+				expr.Ctx.ResultType = v2
+				return v2, nil
+			}
 			start, end := expr.Pos()
-			c.errorf(start, end, "types are not compatible %s, %s", left, right)
-			return unresolvedType, fmt.Errorf("types are not compatible %s, %s", left, right)
+			c.errorf(start, end, "invalid operation: %s %s %s", left, expr.Op, right)
+			return unresolvedType, fmt.Errorf("invalid operation: %s %s, %s", left, expr.Op, right)
 		}
-
-		return left, nil
-
 	case *SelectorExpr:
 		left, err := c.checkExpr(expr.Selector)
 		if err != nil {
@@ -886,7 +1120,8 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 		if err != nil {
 			return unresolvedType, err
 		}
-		c.newCtx(&IndexCtx{parent: c.ctx, expectedType: "i64"})
+		c.newCtx(&IndexCtx{parent: c.ctx, expectedType: "i64", sourceBaseType: c.extractBaseType(l)})
+		expr.ctx = c.ctx.(*IndexCtx)
 		defer c.leaveCtx()
 		r, err := c.checkExpr(expr.Index)
 		if err != nil {
@@ -895,7 +1130,7 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 		}
 
 		// TODO add map in here when we implement that
-		if !c.isArray(l) && l != "string" && !c.isPointer(l) {
+		if !c.isArray(l) && l != "string" && !c.isPointer(l) && !c.isSlice(l) {
 			start, end := expr.Pos()
 			c.errorf(start, end, "invalid access expression either left hand side must be array or map but got: %s", l)
 			return unresolvedType, fmt.Errorf("invalid access expression either left hand side must be array or map but got: %s", l)
@@ -905,6 +1140,10 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 			start, end := expr.Index.Pos()
 			c.errorf(start, end, "invalid index access expression, expected %s, got %s", "i64", r)
 			return unresolvedType, fmt.Errorf("invalid index access expression, expected %s, got %s", "i64", r)
+		}
+
+		if l == "string" {
+			return "char", nil
 		}
 
 		return c.extractType(l), nil
@@ -917,13 +1156,7 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 				return unresolvedType, err
 			}
 
-			if right != "i32" {
-				start, end := expr.Pos()
-				c.errorf(start, end, "right operand must be int")
-				return unresolvedType, fmt.Errorf("right operand must be int")
-			}
-
-			return "i32", nil
+			return right, nil
 		case Not:
 			right, err := c.checkExpr(expr.Right)
 			if err != nil {
@@ -957,11 +1190,13 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 				return unresolvedType, err
 			}
 
-			sym := c.LookupSym(right)
+			extracted := c.extractBaseType(right)
+			sym := c.LookupSym(extracted)
+
 			if sym == nil || !sym.IsTypeDef() {
 				start, end := expr.Right.Pos()
-				c.errorf(start, end, "provided type is not valid: %s", right)
-				return unresolvedType, fmt.Errorf("provided type is not valid: %s", right)
+				c.errorf(start, end, "provided type is not valid: %s", extracted)
+				return unresolvedType, fmt.Errorf("provided type is not valid: %s", extracted)
 			}
 			return fmt.Sprintf(pointerScheme, right), nil
 		case Sizeof:
@@ -1052,7 +1287,10 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 			}
 		}
 
+		// TODO come up with the cleanest solution
 		var isMalloc = funcDef.Name == "malloc_internal" && funcDef.MethodOf == ""
+		ctx.isCustomCall = funcDef.Name == "append" && funcDef.MethodOf == ""
+		var resolvedGenericType string
 		if !funcDef.TypeCast {
 			for i, _ := range expr.Args {
 
@@ -1060,7 +1298,11 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 				if i < len(funcDef.Params) {
 					c.newCtx(ctx)
 					arg := funcDef.Params[i]
-					ctx.expectedType = arg.Type
+					var argType = arg.Type
+					if resolvedGenericType != "" {
+						argType = strings.Replace(argType, funcDef.GenericType, resolvedGenericType, 1)
+					}
+					ctx.expectedType = argType
 				}
 
 				t, err2 := c.checkExpr(expr.Args[i])
@@ -1068,18 +1310,29 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 					if err == nil {
 						err = err2
 					}
-					c.leaveCtx()
+					if i < len(funcDef.Params) {
+						c.leaveCtx()
+					}
 					continue
 				}
 
 				if i < len(funcDef.Params) {
 					arg := funcDef.Params[i]
-					if !c.checkTypeCompatibility(arg.Type, t) {
+					argType := arg.Type
+					if arg.GenericTypeResolver {
+						resolvedGenericType = c.resolveGenericArgType(funcDef, arg, t)
+					}
+
+					if resolvedGenericType != "" {
+						argType = strings.Replace(argType, funcDef.GenericType, resolvedGenericType, 1)
+					}
+
+					if !c.checkTypeCompatibility(argType, t) {
 						start, end := expr.Args[i].Pos()
-						c.errorf(start, end, "expected %s, got %s", arg.Type, t)
-						err = fmt.Errorf("expected %s, got %s", arg.Type, t)
+						c.errorf(start, end, "expected %s, got %s", argType, t)
+						err = fmt.Errorf("expected %s, got %s", argType, t)
 					} else {
-						c.setVarAssignCtxFields(ctx, arg.Type, c.LookupSym(c.extractType(arg.Type)).(*TypeDef))
+						c.setVarAssignCtxFields(ctx, argType, c.LookupSym(c.extractBaseType(argType)).(*TypeDef))
 					}
 					c.leaveCtx()
 				}
@@ -1093,6 +1346,9 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 		}
 
 		return l, err
+	case *ParenExpr:
+		return c.checkExpr(expr.Expr)
+
 	default:
 		panic("unreachable")
 	}

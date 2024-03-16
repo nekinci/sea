@@ -172,6 +172,7 @@ type BinaryExpr struct {
 	Left  Expr
 	Right Expr
 	Op    Operation
+	Ctx   *BinaryExprCtx
 }
 
 func (e *BinaryExpr) Pos() (Pos, Pos) {
@@ -412,6 +413,7 @@ type ForStmt struct {
 	Step  Expr
 	Body  Stmt
 	start Pos
+	ctx   *ForCtx
 }
 
 func (e *ForStmt) Pos() (Pos, Pos) {
@@ -429,10 +431,21 @@ type ReturnStmt struct {
 	ctx        *FuncCtx
 }
 
+func getFuncCtx(ctx Ctx) *FuncCtx {
+	if ct, ok := ctx.(*FuncCtx); ok {
+		return ct
+	}
+
+	if ctx != nil && ctx.parentCtx() != nil {
+		return getFuncCtx(ctx.parentCtx())
+	}
+
+	panic("invalid ctx")
+}
+
 func (r *ReturnStmt) setCtx(ctx Ctx) {
-	ct, ok := ctx.(*FuncCtx)
-	Assert(ok, "FuncCtx must be provided")
-	r.ctx = ct
+	funcCtx := getFuncCtx(ctx)
+	r.ctx = funcCtx
 }
 
 func (r *ReturnStmt) GetCtx() Ctx {
@@ -456,6 +469,7 @@ func (r *ReturnStmt) IsStmt() {}
 // BreakStmt TODO support labels
 type BreakStmt struct {
 	start, end Pos
+	ctx        *ForCtx
 }
 
 func (b *BreakStmt) Pos() (Pos, Pos) {
@@ -466,6 +480,7 @@ func (b *BreakStmt) IsStmt() {}
 
 type ContinueStmt struct {
 	start, end Pos
+	ctx        *ForCtx
 }
 
 func (c *ContinueStmt) Pos() (Pos, Pos) {
@@ -559,6 +574,7 @@ type IndexExpr struct {
 	Left       Expr
 	Index      Expr
 	start, end Pos
+	ctx        *IndexCtx
 }
 
 func (i *IndexExpr) Pos() (Pos, Pos) {

@@ -1,30 +1,250 @@
 package p
 
-# reads given file path and returns whole string content
 extern fun string open_file_read(string path)
 extern fun i32 puts(char* str)
 extern fun i32 puts_str(string str)
 extern fun i32 puts_int(i32 a)
+extern fun i32 str_len(string str)
+extern fun void exit(i32 code)
 extern fun void handle_signal()
 
-extern fun void compare_string(string a, string b)
 
-fun void example(string a, string b) {
-    puts_str(a)
-    puts_str(b)
+struct JsonNode {
+    # node kind
+    string kind
+
+    # for number literals
+    string numberValue
+    # for boolean literals
+    string boolValue
+    # for object key value pointer
+    JsonNode*[] key_value_nodes
+
+    # for object key
+    string key
+
+    # for object value
+    JsonNode* value
+
+    # for array elems
+    JsonNode*[] elems
 }
 
+impl JsonNode {
+
+    fun void append_key_value(JsonNode* jsonNode) {
+        append(this.key_value_nodes, jsonNode)
+        return
+    }
+
+}
+
+struct JsonParser {
+    string file
+    i64 current_pos
+    i64 file_len
+    string current_token
+    bool is_initialized
+}
+
+
+impl JsonParser {
+
+    fun void eat_whitespaces() {
+        for this.file_len > this.current_pos {
+            var bool is_whitespace = this.is_whitespace()
+            if !is_whitespace {
+                break
+            }
+            this.advance_pos()
+        }
+        return
+    }
+
+    fun string parse_quote_literal() {
+        var string value = ""
+
+        for this.current_char() != '"' {
+            value = value + this.current_char()
+            this.advance_pos()
+        }
+
+        this.advance_pos()
+        return value
+    }
+
+    fun string parse_num_literal() {
+        var string value = ""
+        for this.is_numeric() {
+            value = value + this.current_char()
+            this.advance_pos()
+        }
+
+        return value
+    }
+
+    fun string next_token() {
+        this.is_initialized = true
+        var string value = ""
+        for this.file_len > this.current_pos {
+            if this.is_whitespace() {
+                this.eat_whitespaces()
+                continue
+            }
+
+            if this.is_numeric() {
+                value = this.parse_num_literal()
+                this.current_token = value
+                return "<number>"
+            }
+
+
+            value = value + this.current_char()
+            this.advance_pos()
+
+
+            if value == "," {
+                this.current_token = value
+                return "<comma>"
+            }
+
+            if value == "[" {
+                this.current_token = value
+                return "<array_start>"
+            }
+
+            if value == "{" {
+                this.current_token = value
+                return "<object_start>"
+            }
+
+            if value == "\"" {
+                value = this.parse_quote_literal()
+                this.current_token = value
+                return "<double_quote>"
+            }
+
+            if value == "null" {
+                this.current_token = value
+                return "<null>"
+            }
+
+            if value == "true" {
+                this.current_token = value
+                return "<true>"
+            }
+
+            if value == "false" {
+                this.current_token = value
+                return "<false>"
+            }
+
+            if value == ":" {
+                this.current_token = value
+                return "<colon>"
+            }
+
+            if value == "}" {
+                this.current_token = value
+                return "<object_end>"
+            }
+
+            if value == "]" {
+                this.current_token = value
+                return "<array_end>"
+            }
+
+        }
+
+        this.current_token = "<eof>"
+        return this.current_token
+    }
+
+    fun string get_current_token() {
+        if !this.is_initialized {
+            this.next_token()
+            this.is_initialized = true
+        }
+
+        return this.current_token
+    }
+
+    fun JsonNode* parse() {
+       var string kind = this.next_token()
+       puts_str(kind)
+       if kind == "<array_start>" {
+           puts_str("ARRAY: " + kind)
+           return this.parse_array()
+       } else if kind == "<object_start>" {
+            puts_str("OBJECT: " + kind)
+            return this.parse_object()
+       } else if kind == "<number>" {
+            var string numberValue = this.get_current_token()
+            var JsonNode* node = &JsonNode{kind: "number", numberValue: numberValue}
+            return node
+       } else if kind == "<true>" || kind == "<false>" {
+            var string value = this.get_current_token()
+            var JsonNode* node = &JsonNode{kind: "bool", boolValue: value}
+            return node
+       } else {
+            printf_internal("invalid token: %s", kind)
+            exit(0)
+       }
+       return nil
+    }
+
+    fun JsonNode* parse_array() {
+        var JsonNode* jsonNode = &JsonNode{kind: "array"}
+        for this.get_current_token() != "<array_end>" {
+            var JsonNode* child = this.parse()
+            puts_str("OK")
+        }
+        return nil
+    }
+
+    fun JsonNode* parse_object() {
+        var JsonNode* jsonNode = &JsonNode{kind: "object"}
+        var JsonNode* keyValueNode = &JsonNode{kind: "key_value"}
+        var string key = this.next_token()
+        keyValueNode.key = this.get_current_token()
+        var string colon = this.next_token() # ignore that
+        keyValueNode.value = this.parse()
+        jsonNode.append_key_value(keyValueNode)
+        return nil
+    }
+
+    fun bool is_whitespace() {
+        return this.current_char() == '\t' || this.current_char() == '\n' || this.current_char() == ' ' || this.current_char() == '\r'
+    }
+
+    fun bool is_numeric() {
+        return this.current_char() >= '0' && this.current_char() <= '9'
+    }
+
+    fun char current_char() {
+        return this.file[this.current_pos]
+    }
+
+    fun void advance_pos() {
+        if cast_i64(str_len(this.file)) <= this.current_pos {
+            return
+        }
+        this.current_pos = this.current_pos + 1
+        return
+    }
+}
+
+
 # main function
-fun i32 main(i32 arg) {
+fun i32 main(i32 argc) {
  # handle_signal()
- # var string file = open_file_read("./example.json")
-  var string a = "a"
-  var string b = "b"
- # compare_string(a, b)
-  #strcmpe(a, b)
-  #puts_str(a)
-  #puts_str(b)
-  compare_string(a, b)
-  example(a, b)
+  var string file = open_file_read("./example.json")
+  var JsonParser* jsonParser = &JsonParser{
+        file: file,
+        current_pos: 0,
+        is_initialized: false,
+        file_len: cast_i64(str_len(file))
+  }
+  jsonParser.parse()
   return 0
 }

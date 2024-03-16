@@ -220,15 +220,15 @@ func (p *Parser) parseStmt() Stmt {
 	case TokBreak:
 		p.expect(TokBreak)
 		// TODO handle labels
-		return &BreakStmt{p.startOfLastExpected(), p.endOfLastExpected()}
+		return &BreakStmt{p.startOfLastExpected(), p.endOfLastExpected(), nil}
 	case TokContinue:
 		p.expect(TokContinue)
-		return &ContinueStmt{p.startOfLastExpected(), p.endOfLastExpected()}
+		return &ContinueStmt{p.startOfLastExpected(), p.endOfLastExpected(), nil}
 	case TokReturn:
 		p.expect(TokReturn)
 		returnStmt := &ReturnStmt{start: p.startOfLastExpected()}
 		if p.Start().Line == returnStmt.start.Line {
-			returnStmt.Value = p.parseExpr()
+			returnStmt.Value = p.parseObjLiteral(p.parseExpr())
 		} else {
 			returnStmt.end = p.endOfLastExpected()
 		}
@@ -434,6 +434,8 @@ func (p *Parser) op(tok Token) Operation {
 		return Or
 	case TokBAnd:
 		return Band
+	case TokNot:
+		return Not
 	default:
 		panic("unreachable op=" + string(tok))
 	}
@@ -471,6 +473,16 @@ func (p *Parser) parseSelectorExpr(lbracketMode bracketMode) Expr {
 	// %3 = {Left: %2, Args:...}
 	// %4 = {Ident: d, Selector: %3}
 	// {Ident: d, Selector: {Left: {Left: {Ident: c, Selector: {Left: b, Args:...} }, Args:...} , Args:...}}
+	if lbracketMode == bracketType {
+		if p.curTok == TokMultiply {
+			p.expect(TokMultiply)
+			end := p.endOfLastExpected()
+			expr = &RefTypeExpr{
+				Expr: expr,
+				end:  end,
+			}
+		}
+	}
 
 	for p.curTok == TokDot || p.curTok == TokLParen || p.curTok == TokLBracket {
 		if p.curTok == TokLParen {
@@ -557,13 +569,23 @@ func (p *Parser) parseSimpleExpr() Expr {
 	case TokString:
 		_, str := p.expect(TokString)
 		unquotedStr, err := strconv.Unquote(str)
-		Assert(err == nil, "unquoted string expected")
+		Assert(err == nil, "unquoted string expected: "+str)
 		// implicitly add end of string to unquoted string
 		unquotedStr += "\x00"
 		return &StringExpr{Value: str, Unquoted: unquotedStr, start: p.startOfLastExpected(), end: p.endOfLastExpected()}
 	case TokChar:
 		_, char := p.expect(TokChar)
-		value := rune(char[1])
+		var value rune
+		value = rune(char[1])
+		if char == "'\\t'" {
+			value = '\t'
+		} else if char == "'\\n'" {
+			value = '\n'
+		} else if char == "\\0" {
+			value = 0
+		} else if char == "'\\r'" {
+			value = '\r'
+		}
 		return &CharExpr{Value: char, Unquoted: value, start: p.startOfLastExpected(), end: p.endOfLastExpected()}
 	case TokSizeof:
 		p.expect(TokSizeof)
@@ -608,7 +630,7 @@ func (p *Parser) parseSimpleExpr() Expr {
 	case TokBAnd:
 		p.expect(TokBAnd)
 		var start = p.startOfLastExpected()
-		expr := p.parseExpr()
+		expr := p.parseObjLiteral(p.parseExpr())
 		return &UnaryExpr{Op: Band, Right: expr, start: start}
 	default:
 		p.errorf(false, "Unsupported token: "+p.curVal)
@@ -630,7 +652,13 @@ func (p *Parser) parsePackageStmt() *PackageStmt {
 
 func (p *Parser) parseAssignExpr(identExpr Expr) *AssignExpr {
 	p.expect(TokAssign)
-	assignExpr := &AssignExpr{identExpr, p.parseExpr(), nil}
+	var expr = p.parseExpr()
+	if p.curTok == TokSemicolon {
+		p.expect(TokSemicolon)
+	} else {
+		expr = p.parseObjLiteral(expr)
+	}
+	assignExpr := &AssignExpr{identExpr, expr, nil}
 	return assignExpr
 }
 
