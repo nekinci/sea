@@ -236,6 +236,10 @@ func (c *Compiler) initBuiltinFuncs() {
 		types.Void, ir.NewParam("", types.NewPointer(c.types["slice"])), ir.NewParam("", types.NewPointer(types.I8)))
 	appendSliceData.Linkage = enum.LinkageExternal
 	c.funcs["append"] = appendSliceData
+
+	lenSlice := module.NewFunc("len_slice", types.I64, c.NewPassByValueParameter("", c.types["slice"]))
+	lenSlice.Linkage = enum.LinkageExternal
+	c.funcs["len"] = lenSlice
 }
 
 func (c *Compiler) resolveType(expr Expr) types.Type {
@@ -393,8 +397,8 @@ func (c *Compiler) compileFunc(def *FuncDefStmt, isMethod bool, thisType types.T
 				c.compileStmt(innerStmt)
 			}
 
-			if _, ok := typ.(*types.VoidType); ok && block.Term == nil {
-				block.NewRet(nil)
+			if _, ok := typ.(*types.VoidType); ok && c.currentBlock.Term == nil {
+				c.currentBlock.NewRet(nil)
 			}
 
 		}
@@ -496,12 +500,13 @@ func (c *Compiler) compileStmt(stmt Stmt) {
 }
 
 func (c *Compiler) compileIfStmt(stmt *IfStmt) {
+	seq := c.GetSequence()
 	cond := c.compileExpr(stmt.Cond)
-	thenBlock := c.currentFunc.NewBlock("")
-	continueBlock := c.currentFunc.NewBlock("")
+	thenBlock := c.currentFunc.NewBlock("if_then_" + seq)
+	continueBlock := c.currentFunc.NewBlock("if_continue_" + seq)
 	var elseBlock *ir.Block = continueBlock
 	if stmt.Else != nil {
-		elseBlock = c.currentFunc.NewBlock("")
+		elseBlock = c.currentFunc.NewBlock("else_" + seq)
 	}
 
 	c.currentBlock.NewCondBr(cond, thenBlock, elseBlock)
@@ -561,12 +566,12 @@ func (c *Compiler) compileForStmt(stmt *ForStmt) {
 	}
 
 	defer func() { c.currentScope = c.currentScope.Parent }()
-
-	stmt.ctx.breakBlock = c.currentFunc.NewBlock("for_break_block_" + c.GetSequence())
-	initBlock := c.currentFunc.NewBlock("init_" + c.GetSequence())
-	forBlock := c.currentFunc.NewBlock("for_body_" + c.GetSequence())
-	condBlock := c.currentFunc.NewBlock("for_cond_" + c.GetSequence())
-	stepBlock := c.currentFunc.NewBlock("step_" + c.GetSequence())
+	seq := c.GetSequence()
+	stmt.ctx.breakBlock = c.currentFunc.NewBlock("for_break_block_" + seq)
+	initBlock := c.currentFunc.NewBlock("init_" + seq)
+	forBlock := c.currentFunc.NewBlock("for_body_" + seq)
+	condBlock := c.currentFunc.NewBlock("for_cond_" + seq)
+	stepBlock := c.currentFunc.NewBlock("step_" + seq)
 
 	stmt.ctx.forBlock = forBlock
 	stmt.ctx.condBlock = condBlock
@@ -690,7 +695,12 @@ func (c *Compiler) customCall(expr *CallExpr) value.Value {
 		p0 := c.compileExpr(expr.Args[0])
 		p1 := c.compileExpr(expr.Args[1])
 		a1 := c.currentBlock.NewAlloca(p1.Type())
-		c.currentBlock.NewStore(p1, a1)
+		if p11, ok := p1.(*ir.InstAlloca); ok {
+			c.memcpyInternal(a1, p11)
+		} else {
+			c.currentBlock.NewStore(p1, a1)
+		}
+
 		c1 := c.currentBlock.NewBitCast(a1, types.NewPointer(types.I8))
 		return c.currentBlock.NewCall(fun, p0.(*ir.InstLoad).Src, c1)
 	} else {
@@ -722,7 +732,6 @@ func (c *Compiler) call(expr *CallExpr) value.Value {
 	var returnVal value.Value = nil
 	if !expr.TypeCast {
 		fun := c.getFunc(funcName)
-
 		if len(fun.Params) > 0 {
 			id := 0
 			if isMethodCall {
@@ -774,7 +783,7 @@ func (c *Compiler) call(expr *CallExpr) value.Value {
 						}
 
 					}
-					//param.Attrs = slices.Delete(param.Attrs, 0, 1)
+					//param.xAttrs = slices.Delete(param.Attrs, 0, 1)
 				}
 			}
 
@@ -914,8 +923,20 @@ func (c *Compiler) newObject(expr *ObjectLitExpr, alloc value.Value) value.Value
 			if _, ok := alloc.(*ir.InstAlloca).ElemType.(*types.PointerType); ok {
 				val = c.currentBlock.NewLoad(types.NewPointer(typ), alloc)
 			}
-			gep := c.currentBlock.NewGetElementPtr(typ, val, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, int64(fieldIndex)))
-			c.currentBlock.NewStore(v, gep)
+
+			if c.isStorable(kv.Context()) {
+				gep := c.currentBlock.NewGetElementPtr(typ, val, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, int64(fieldIndex)))
+				c.currentBlock.NewStore(v, gep)
+			} else {
+				gep := c.currentBlock.NewGetElementPtr(typ, val, constant.NewInt(types.I32, 0), constant.NewInt(types.I32, int64(fieldIndex)))
+				switch v := v.(type) {
+				case *ir.InstLoad:
+					c.memcpyInternal(gep, v.Src)
+				default:
+					c.memcpyInternal(gep, v)
+				}
+			}
+
 		}
 	}
 
@@ -939,8 +960,17 @@ func (c *Compiler) getThisArg(expr Expr) value.Value {
 		var returnVal value.Value
 		switch s := sel.(type) {
 		case *ir.InstLoad:
-			elemType = s.Src.(*ir.InstAlloca).ElemType
-			returnVal = s.Src
+			switch s1 := s.Src.(type) {
+			case *ir.InstAlloca:
+				elemType = s1.ElemType
+				returnVal = s1
+			case *ir.InstLoad:
+				elemType = s1.ElemType
+				returnVal = s1
+				return s1
+			default:
+				panic("unimplemented case")
+			}
 		case *ir.InstCall:
 			elemType = s.Typ.(*types.PointerType).ElemType
 			returnVal = s
@@ -1017,6 +1047,9 @@ func (c *Compiler) isStorable(ctx *VarAssignCtx) bool {
 	}
 
 	if ctx.isStruct {
+		return false
+	}
+	if ctx.isSlice {
 		return false
 	}
 
@@ -1104,7 +1137,7 @@ func (c *Compiler) compileExpr(expr Expr) value.Value {
 				c.currentBlock.NewCall(c.funcs["append"], alloc, cast)
 			}
 
-			return c.currentBlock.NewLoad(c.types["slice"], alloc)
+			return alloc
 		} else {
 			return c.newArray(expr, typ)
 		}
@@ -1326,9 +1359,15 @@ func (c *Compiler) compileExpr(expr Expr) value.Value {
 						expr.Index,
 					},
 				})
-				baseType := expr.ctx.sourceBaseType
-				cast := c.currentBlock.NewBitCast(data, types.NewPointer(c.types[baseType]))
-				return c.currentBlock.NewLoad(c.types[baseType], cast)
+				sourceBaseType := expr.ctx.sourceBaseType
+				if expr.ctx.isPointer {
+					c1 := c.currentBlock.NewBitCast(data, types.NewPointer(types.NewPointer(c.types[sourceBaseType])))
+					l1 := c.currentBlock.NewLoad(types.NewPointer(c.types[sourceBaseType]), c1)
+					return l1
+				} else {
+					cast := c.currentBlock.NewBitCast(data, types.NewPointer(c.types[sourceBaseType]))
+					return c.currentBlock.NewLoad(c.types[sourceBaseType], cast)
+				}
 			} else {
 				panic("Index operation cannot be used with non-array type")
 			}

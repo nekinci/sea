@@ -303,6 +303,22 @@ func (c *Checker) initGlobalScope() {
 		Completed:   true,
 		GenericType: "!T",
 	})
+	AssertErr(err)
+
+	err = c.addSymbol("len", &FuncDef{
+		Name: "len",
+		Type: "i64",
+		Params: []Param{
+			{
+				Name:                "slice",
+				Type:                "slice<!T>",
+				GenericTypeResolver: true,
+			},
+		},
+		External:    true,
+		Completed:   true,
+		GenericType: "!T",
+	})
 }
 
 func (scope *Scope) LookupSym(name string) Symbol {
@@ -958,13 +974,18 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 	case *BoolExpr:
 		return "bool", nil
 	case *ArrayLitExpr:
+		expr.setCtx(c.ctx)
 		var firstType string
-		for i, elem := range expr.Elems {
+		ctx := expr.ctx.(*VarAssignCtx)
+		if expr.ctx.(*VarAssignCtx).isSlice {
+			firstType = c.extractType(ctx.expectedType)
+		}
+		for _, elem := range expr.Elems {
 			elemType, err := c.checkExpr(elem)
 			if err != nil {
 				continue
 			}
-			if i == 0 {
+			if firstType == "" {
 				firstType = elemType
 			} else {
 				if !c.checkTypeCompatibility(firstType, elemType) {
@@ -974,7 +995,7 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 			}
 		}
 
-		if c.ctx.(*VarAssignCtx).isSlice {
+		if ctx.isSlice {
 			return fmt.Sprintf(sliceScheme, firstType), nil
 		}
 		return fmt.Sprintf(arrayScheme, firstType, len(expr.Elems)), nil
@@ -1014,7 +1035,7 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 				continue
 			}
 
-			ctx := &VarAssignCtx{parent: c.ctx, expectedType: l}
+			ctx := &VarAssignCtx{parent: c.ctx, expectedType: l, extractedType: c.extractBaseType(l), isSlice: c.isSlice(l)}
 			c.newCtx(ctx)
 			ctx.arraySize = c.getArraySizeFromTypeStr(l)
 			r, err := c.checkExpr(kv.Value)
@@ -1031,7 +1052,7 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 					ctxter.setCtx(ctx)
 				}
 				kv.setCtx(ctx)
-				c.setVarAssignCtxFields(ctx, l, c.LookupSym(l).(*TypeDef))
+				c.setVarAssignCtxFields(ctx, l, c.LookupSym(c.extractBaseType(l)).(*TypeDef))
 			}
 
 			c.leaveCtx()
@@ -1120,7 +1141,7 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 		if err != nil {
 			return unresolvedType, err
 		}
-		c.newCtx(&IndexCtx{parent: c.ctx, expectedType: "i64", sourceBaseType: c.extractBaseType(l)})
+		c.newCtx(&IndexCtx{parent: c.ctx, expectedType: "i64", sourceBaseType: c.extractBaseType(l), isPointer: c.isPointer(c.extractType(l))})
 		expr.ctx = c.ctx.(*IndexCtx)
 		defer c.leaveCtx()
 		r, err := c.checkExpr(expr.Index)
@@ -1227,8 +1248,10 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 		}
 
 		ctx := &VarAssignCtx{
-			parent:       c.ctx,
-			expectedType: l,
+			parent:        c.ctx,
+			expectedType:  l,
+			extractedType: c.extractBaseType(l),
+			isSlice:       c.isSlice(l),
 		}
 
 		c.newCtx(ctx)
@@ -1247,7 +1270,7 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 		} else {
 			sym := c.LookupSym(c.extractBaseType(r))
 			if sym.IsTypeDef() {
-				c.setVarAssignCtxFields(ctx, sym.TypeName(), sym.(*TypeDef))
+				c.setVarAssignCtxFields(ctx, l, sym.(*TypeDef))
 			}
 		}
 

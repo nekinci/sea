@@ -27,19 +27,32 @@ slice make_slice() {
     slice s;
     s.cap = 2;
     s.size = 0;
-    s.data_list = malloc(sizeof(char*) * s.cap);
+    s.data_list = malloc(sizeof(char**) * s.cap);
     return s;
 }
 
 void append_slice_data(slice* s, char* data) {
+    if (s == NULL) {
+        printf("Null reference access error: \n");
+        exit(1);
+    }
     if (s -> size >= s -> cap) {
-        s -> cap *= 2;
-        s -> data_list = realloc(s -> data_list, sizeof(char*) * s -> cap);
+        s -> cap = s -> cap * 2;
+        s -> data_list = realloc(s -> data_list, sizeof(char**) * s -> cap);
     }
 
     *(s -> data_list + s -> size) = data;
     s -> size++;
 }
+
+long len_slice(slice s) {
+    return s.size;
+}
+typedef struct {
+    long a;
+    long b;
+    long c;
+} K;
 
 char* access_slice_data(slice s, int index) {
     if (index >= s.size) {
@@ -97,25 +110,6 @@ int scanf_internal(string s, ...) {
      va_end(args);
      return r;
 }
-
-int another_scanf(string* s) {
-    s -> size = 5;
-    return 0;
-}
-
-int yet_another_scanf(string s) {
-s.size = 4;
-    return 0;
-}
-
-string* abc(int x) {
-    return NULL;
-}
-
-int cba(int* x) {
-    return 0;
-}
-
 
 void* malloc_internal(size_t s) {
     return malloc(s);
@@ -205,6 +199,9 @@ void h_s(int signo) {
     exit(255);
 }
 
+char* to_char_pointer(string s) {
+    return s.buffer;
+}
 
 int compare_string(string a, string b) {
     if (a.size != b.size) return 0;
@@ -256,4 +253,34 @@ int str_len(string str) {
 
 void handle_signal() {
     signal(SIGSEGV, h_s);
+}
+
+struct JsonNode {
+    string kind;
+
+    string numberValue;
+    string boolValue;
+
+    string stringValue;
+
+    slice key_value_nodes;
+
+    string key;
+
+    struct JsonNode* value;
+
+    slice elems;
+
+};
+
+typedef struct JsonNode JsonNode;
+
+void print_JsonNodeInC(JsonNode* jsonNode) {
+
+    char** data = jsonNode -> elems.data_list + 0;
+    char *d = *data;
+    uintptr_t d2 = d;
+    JsonNode* newm = malloc(sizeof(JsonNode));
+    int a = 5;
+    printf("%p %p--- in c\n", newm, d2);
 }

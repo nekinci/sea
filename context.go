@@ -66,6 +66,7 @@ type IndexCtx struct {
 	parent         Ctx
 	expectedType   string
 	sourceBaseType string
+	isPointer      bool
 }
 
 func (i *IndexCtx) parentCtx() Ctx {

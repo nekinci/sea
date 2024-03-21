@@ -7,6 +7,8 @@ extern fun i32 puts_int(i32 a)
 extern fun i32 str_len(string str)
 extern fun void exit(i32 code)
 extern fun void handle_signal()
+extern fun char* to_char_pointer(string s)
+extern fun void print_JsonNodeInC(JsonNode* jsonNode)
 
 
 struct JsonNode {
@@ -17,6 +19,10 @@ struct JsonNode {
     string numberValue
     # for boolean literals
     string boolValue
+
+    # for string values
+    string stringValue
+
     # for object key value pointer
     JsonNode*[] key_value_nodes
 
@@ -28,14 +34,6 @@ struct JsonNode {
 
     # for array elems
     JsonNode*[] elems
-}
-
-impl JsonNode {
-
-    fun void append_key_value(JsonNode* jsonNode) {
-        append(this.key_value_nodes, jsonNode)
-        return
-    }
 
 }
 
@@ -171,46 +169,64 @@ impl JsonParser {
 
     fun JsonNode* parse() {
        var string kind = this.next_token()
-       puts_str(kind)
        if kind == "<array_start>" {
-           puts_str("ARRAY: " + kind)
            return this.parse_array()
        } else if kind == "<object_start>" {
-            puts_str("OBJECT: " + kind)
             return this.parse_object()
        } else if kind == "<number>" {
             var string numberValue = this.get_current_token()
             var JsonNode* node = &JsonNode{kind: "number", numberValue: numberValue}
+            this.next_token()
             return node
        } else if kind == "<true>" || kind == "<false>" {
             var string value = this.get_current_token()
             var JsonNode* node = &JsonNode{kind: "bool", boolValue: value}
+            this.next_token()
+            return node
+       } else if kind == "<double_quote>" {
+            var string value = this.get_current_token()
+            var JsonNode* node = &JsonNode{kind: "string", stringValue: value}
+            this.next_token()
             return node
        } else {
-            printf_internal("invalid token: %s", kind)
-            exit(0)
+           printf_internal("invalid token: %s", kind)
+           exit(1)
        }
+
+       puts_str("in here nil")
        return nil
     }
 
     fun JsonNode* parse_array() {
-        var JsonNode* jsonNode = &JsonNode{kind: "array"}
-        for this.get_current_token() != "<array_end>" {
+        var JsonNode* j = &JsonNode{kind: "array"}
+        j.elems = []
+        append(j.elems, &JsonNode{kind: "object"})
+      /*  for this.get_current_token() != "<array_end>" && this.get_current_token() != "<eof>"  {
             var JsonNode* child = this.parse()
-            puts_str("OK")
-        }
-        return nil
+            append(jsonNode.elems, child)
+            this.next_token()
+        }*/
+        return j
     }
 
     fun JsonNode* parse_object() {
-        var JsonNode* jsonNode = &JsonNode{kind: "object"}
-        var JsonNode* keyValueNode = &JsonNode{kind: "key_value"}
-        var string key = this.next_token()
-        keyValueNode.key = this.get_current_token()
-        var string colon = this.next_token() # ignore that
-        keyValueNode.value = this.parse()
-        jsonNode.append_key_value(keyValueNode)
-        return nil
+        var JsonNode* jsonNode = &JsonNode{kind: "object", key_value_nodes: []}
+        for true {
+            var JsonNode* keyValueNode = &JsonNode{kind: "key_value"}
+            var string key = this.next_token()
+            keyValueNode.key = this.get_current_token()
+            this.next_token() # ignore that; colon
+            var JsonNode* val = this.parse()
+            keyValueNode.value = val
+            append(jsonNode.key_value_nodes, keyValueNode)
+
+            if this.get_current_token() == "}" {
+                this.next_token()
+                break
+            }
+        }
+
+        return jsonNode
     }
 
     fun bool is_whitespace() {
@@ -232,8 +248,206 @@ impl JsonParser {
         this.current_pos = this.current_pos + 1
         return
     }
+
 }
 
+
+fun void print(JsonNode* jsonNode) {
+     if jsonNode.kind == "array" {
+          puts_str("[")
+                      puts_str("]")
+       for var i64 i = 0; i < 3; i = i + 1; {
+            puts_str("girdi")
+            puts_str("girdi")
+            puts_str("girdi")
+            puts_str("girdi")
+            puts_str("girdi")
+            puts_str("girdi")
+            puts_str("girdi")
+            puts_str("girdi")
+            puts_str("girdi")
+            puts_str("girdi")
+            puts_str("girdi")
+            puts_str("girdi")
+            puts_str("girdi")
+            puts_str("girdi")
+            puts_str("girdi")
+            print(jsonNode.elems[0])
+
+            puts_str("girdi")
+            puts_str("girdi")
+            puts_str("girdi")
+            puts_str("girdi")
+            puts_str("girdi")
+            puts_str("girdi")
+            puts_str("girdi")
+            puts_str("girdi")
+            puts_str("girdi")
+            puts_str("girdi")
+            puts_str("girdi")
+            puts_str("girdi")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi222")
+            puts_str("girdi2223")
+            puts_str("girdi2223")
+            puts_str("girdi2223")
+            puts_str("girdi2223")
+            puts_str("girdi2223")
+            puts_str("girdi2223")
+            puts_str("girdi2223")
+            puts_str("girdi2223")
+            puts_str("girdi2223")
+            puts_str("girdi2223")
+            puts_str("girdi2223")
+            puts_str("girdi2223")
+            puts_str("girdi2223")
+            puts_str("girdi2223")
+            puts_str("girdi2223")
+            puts_str("girdi2223")
+            puts_str("girdi2223")
+            puts_str("girdi2223")
+            puts_str("girdi2223")
+            puts_str("girdi2223")
+            puts_str("girdi2223")
+            puts_str("girdi2223")
+            puts_str("girdi2223")
+            puts_str("girdi2223")
+            puts_str("girdi2223")
+            puts_str("girdi2223")
+            puts_str("girdi2223")
+            puts_str("girdi2223")
+            puts_str("girdi2223")
+            puts_str("girdi2223")
+            puts_str("girdi2223")
+            puts_str("girdi2223")
+            puts_str("girdi2223")
+            puts_str("girdi2223")
+            puts_str("girdi2223")
+            puts_str("girdi2223")
+            puts_str("girdi2223")
+            puts_str("girdi2223")
+            puts_str("girdi2223")
+            puts_str("girdi2223")
+            puts_str("girdi22234")
+            puts_str("girdi22234")
+            puts_str("girdi22234")
+            puts_str("girdi22234")
+            puts_str("girdi22234")
+            puts_str("girdi22234")
+            puts_str("girdi22234")
+            puts_str("girdi22234")
+            puts_str("girdi22234")
+            puts_str("girdi22234")
+            puts_str("girdi22234")
+            puts_str("girdi22234")
+            puts_str("girdi22234")
+            puts_str("girdi22234")
+            puts_str("girdi22234")
+            puts_str("girdi22234")
+            puts_str("girdi22234")
+            puts_str("girdi22234")
+            puts_str("girdi22234")
+            puts_str("girdi22234")
+            puts_str("girdi22234")
+            puts_str("girdi22234")
+            puts_str("girdi22234")
+            puts_str("girdi22234")
+            puts_str("girdi22234")
+            puts_str("girdi22234")
+            puts_str("girdi22234")
+            puts_str("girdi22234")
+            puts_str("girdi22234")
+            puts_str("girdi22234")
+            puts_str("girdi22234")
+            puts_str("girdi22234")
+            puts_str("girdi22234")
+            puts_str("girdi22234")
+            puts_str("girdi22234")
+            puts_str("girdi22234")
+            puts_str("girdi22234")
+
+       }
+
+     }
+    return
+}
+
+fun void print_indent(i32 indent) {
+    return
+}
 
 # main function
 fun i32 main(i32 argc) {
@@ -245,6 +459,19 @@ fun i32 main(i32 argc) {
         is_initialized: false,
         file_len: cast_i64(str_len(file))
   }
-  jsonParser.parse()
+  var JsonNode* node =  jsonParser.parse()
+ # puts_str(node.elems[0].kind)
+#  var JsonNode* val = &JsonNode{kind: "string", stringValue: "abcdeneme"}
+#  var JsonNode* kv = &JsonNode{kind: "key_value", key: "abc",value: val}
+  var JsonNode* obj = &JsonNode{kind: "object", key_value_nodes: []}
+ # append(obj.key_value_nodes, kv)
+ # append(obj.key_value_nodes, &JsonNode{kind: "key_value", key: "boolVal", value: &JsonNode{kind: "bool", boolValue: "true"}})
+  var JsonNode* arr = &JsonNode{kind: "array", elems: [obj, obj, obj, obj, obj]}
+ # append(arr.elems, obj)
+ # append(arr.elems, obj)
+  print(arr)
+#  puts_str(node.elems[0].kind)
+#  my_put(node.elems[0])
+  print_JsonNodeInC(node)
   return 0
 }
