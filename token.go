@@ -65,4 +65,5 @@ const (
 	TokRBracket      Token = "]"
 	TokChar          Token = "<char_literal>"
 	TokPackage       Token = "package"
+	TokNew           Token = "new"
 )

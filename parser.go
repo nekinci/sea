@@ -597,6 +597,22 @@ func (p *Parser) parseSimpleExpr() Expr {
 		p.expect(TokRParen)
 		// TODO Is UnaryExpr or special handling
 		return &UnaryExpr{Op: Sizeof, Right: &IdentExpr{Name: typ, start: identStart, end: identEnd}, start: start}
+	case TokNew:
+		p.expect(TokNew)
+		var start = p.startOfLastExpected()
+		p.expect(TokLParen)
+		_, typ := p.expect(TokIdentifier)
+		identStart, identEnd := p.startOfLastExpected(), p.endOfLastExpected()
+		p.expect(TokRParen)
+		return &UnaryExpr{
+			Op: New,
+			Right: &IdentExpr{
+				Name:  typ,
+				start: identStart,
+				end:   identEnd,
+			},
+			start: start,
+		}
 	case TokNumber:
 		return p.parseNumberExpr()
 	case TokFloat:
@@ -625,6 +641,7 @@ func (p *Parser) parseSimpleExpr() Expr {
 		if p.curTok == TokAssign {
 			p.expect(TokAssign)
 			right = p.parseExpr()
+			right = p.parseObjLiteral(right)
 			return &AssignExpr{Left: expr, Right: right}
 		}
 		return expr

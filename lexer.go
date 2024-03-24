@@ -256,6 +256,8 @@ func (l *Lexer) tok() Token {
 			return TokNil
 		case "sizeof":
 			return TokSizeof
+		case "new":
+			return TokNew
 		case "package":
 			return TokPackage
 		}

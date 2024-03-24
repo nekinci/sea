@@ -270,22 +270,6 @@ func (c *Checker) initGlobalScope() {
 	})
 	AssertErr(err)
 
-	err = c.addSymbol("malloc_internal", &FuncDef{
-		DefNode: nil,
-		Name:    "malloc_internal",
-		Type:    "pointer<i8>",
-		Params: []Param{{
-			Param: nil,
-			Name:  "size",
-			Type:  "i64",
-		}},
-		External:    true,
-		Variadic:    false,
-		Completed:   true,
-		TypeCast:    false,
-		CheckParams: true,
-	})
-	AssertErr(err)
 	err = c.addSymbol("append", &FuncDef{
 		Name: "append",
 		Type: "void",
@@ -1297,6 +1281,24 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 				c.errorf(start, end, "unexpected token, expected type identifier")
 				return unresolvedType, errors.New("unexpected token, expected type identifier")
 			}
+		case New:
+			switch r := expr.Right.(type) {
+			case *IdentExpr:
+				var typName = r.Name
+				n := c.extractBaseType(r.Name)
+				var sym = c.LookupSym(n)
+				if sym == nil || !sym.IsTypeDef() {
+					start, end := expr.Right.Pos()
+					c.errorf(start, end, "type is not found: %s", typName)
+					return unresolvedType, fmt.Errorf("type is not found: %s", typName)
+				}
+				var res = strings.Replace(pointerScheme, "%s", typName, 1)
+				return res, nil
+			default:
+				start, end := expr.Right.Pos()
+				c.errorf(start, end, "unexpected token, expected type identifier")
+				return unresolvedType, errors.New("unexpected token, expected type identifier")
+			}
 		default:
 			panic("unreachable")
 		}
@@ -1380,7 +1382,6 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 		}
 
 		// TODO come up with the cleanest solution
-		var isMalloc = funcDef.Name == "malloc_internal" && funcDef.MethodOf == ""
 		ctx.isCustomCall = (funcDef.Name == "append" || funcDef.Name == "print" || funcDef.Name == "println") && funcDef.MethodOf == ""
 		var resolvedGenericType string
 		if !funcDef.TypeCast {
@@ -1435,10 +1436,6 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 			}
 		} else {
 			err = c.checkTypeCast(expr, funcDef)
-		}
-
-		if isMalloc {
-			return fmt.Sprintf(autoCastScheme, l), err
 		}
 
 		return l, err

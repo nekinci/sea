@@ -323,5 +323,8 @@ fun i32 main(i32 argc) {
 
     var A*[] elems = [&A{a: 1, b: 2, c:3}]
     println(".." + "..." + "...")
+    var JsonNode* ptr = new(JsonNode)
+    *ptr = JsonNode{kind: "abcdef"}
+    println(ptr.kind)
     return 0
 }

@@ -1461,6 +1461,10 @@ func (c *Compiler) compileExpr(expr Expr) value.Value {
 		case Not:
 			right := c.compileExpr(expr.Right)
 			return generateOperation(c.currentBlock, right, constant.NewInt(types.I1, 1), Xor)
+		case New:
+			allocation := c.mallocInternal(c.getSizeOf(expr.Right))
+			resolveType := c.resolveType(expr.Right)
+			return c.currentBlock.NewBitCast(allocation, types.NewPointer(resolveType))
 		default:
 			panic("Unreachable unary expression op = " + expr.Op.String())
 		}
@@ -1583,6 +1587,7 @@ const (
 	Or
 	Sizeof
 	Xor
+	New
 )
 
 func (o Operation) String() string {
@@ -1615,6 +1620,8 @@ func (o Operation) String() string {
 		return "&"
 	case Sizeof:
 		return "sizeof"
+	case New:
+		return "new"
 	default:
 		panic("unreachable")
 	}
