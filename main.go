@@ -111,6 +111,7 @@ func clangCompile(path, runtimePath string, runBinary bool, outputForwarding boo
 	}
 
 	command := exec.Command("clang", path, runtimeOutputPath, "-o", outputPath)
+	fmt.Printf("RUN CMD: %s\n", command.String())
 	if outputForwarding {
 		command.Stdout = os.Stdout
 		command.Stderr = os.Stdout

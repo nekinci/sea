@@ -228,18 +228,76 @@ func (c *Compiler) initBuiltinFuncs() {
 	c.funcs["make_slice"] = makeSlice
 
 	accessSliceIndex := module.NewFunc("access_slice_data",
-		types.NewPointer(types.I8), c.NewPassByValueParameter("slice", c.types["slice"]), ir.NewParam("", types.I64))
+		types.I64, c.NewPassByValueParameter("slice", c.types["slice"]), ir.NewParam("", types.I64))
 	accessSliceIndex.Linkage = enum.LinkageExternal
 	c.funcs["access_slice_data"] = accessSliceIndex
+
+	accessSliceIndexP := module.NewFunc("access_slice_datap",
+		types.I64, c.NewPassByValueParameter("slice", c.types["slice"]), ir.NewParam("", types.I64))
+	accessSliceIndex.Linkage = enum.LinkageExternal
+	c.funcs["access_slice_datap"] = accessSliceIndexP
 
 	appendSliceData := module.NewFunc("append_slice_data",
 		types.Void, ir.NewParam("", types.NewPointer(c.types["slice"])), ir.NewParam("", types.NewPointer(types.I8)))
 	appendSliceData.Linkage = enum.LinkageExternal
 	c.funcs["append"] = appendSliceData
 
+	appendSliceDatap := module.NewFunc("append_slice_datap",
+		types.Void, ir.NewParam("", types.NewPointer(c.types["slice"])), ir.NewParam("", types.NewPointer(types.I8)))
+	appendSliceData.Linkage = enum.LinkageExternal
+	c.funcs["appendp"] = appendSliceDatap
+
 	lenSlice := module.NewFunc("len_slice", types.I64, c.NewPassByValueParameter("", c.types["slice"]))
 	lenSlice.Linkage = enum.LinkageExternal
 	c.funcs["len"] = lenSlice
+
+	printStrFn := module.NewFunc("__print_str__", types.Void, c.NewPassByValueParameter("str", c.types["string"]))
+	printStrFn.Linkage = enum.LinkageExternal
+	c.funcs["__print_str__"] = printStrFn
+
+	printI8Fn := module.NewFunc("__print_i8__", types.Void, ir.NewParam("", c.types["i8"]))
+	printI8Fn.Linkage = enum.LinkageExternal
+	c.funcs["__print_i8__"] = printI8Fn
+
+	printI16Fn := module.NewFunc("__print_i16__", types.Void, ir.NewParam("", c.types["i16"]))
+	printI16Fn.Linkage = enum.LinkageExternal
+	c.funcs["__print_i16__"] = printI16Fn
+
+	printI32Fn := module.NewFunc("__print_i32__", types.Void, ir.NewParam("", c.types["i32"]))
+	printI32Fn.Linkage = enum.LinkageExternal
+	c.funcs["__print_i32__"] = printI32Fn
+
+	printI64Fn := module.NewFunc("__print_i64__", types.Void, ir.NewParam("", c.types["i64"]))
+	printI64Fn.Linkage = enum.LinkageExternal
+	c.funcs["__print_i64__"] = printI64Fn
+
+	printF16Fn := module.NewFunc("__print_f16__", types.Void, ir.NewParam("", c.types["f16"]))
+	printF16Fn.Linkage = enum.LinkageExternal
+	c.funcs["__print_f16__"] = printF16Fn
+
+	printF32Fn := module.NewFunc("__print_f32__", types.Void, ir.NewParam("", c.types["f32"]))
+	printF32Fn.Linkage = enum.LinkageExternal
+	c.funcs["__print_f32__"] = printF32Fn
+
+	printF64Fn := module.NewFunc("__print_f64__", types.Void, ir.NewParam("", c.types["f64"]))
+	printF64Fn.Linkage = enum.LinkageExternal
+	c.funcs["__print_f64__"] = printF64Fn
+
+	printCharFn := module.NewFunc("__print_char__", types.Void, ir.NewParam("_", c.types["char"]))
+	printCharFn.Linkage = enum.LinkageExternal
+	c.funcs["__print_char__"] = printCharFn
+
+	printCharPFn := module.NewFunc("__print_charp__", types.Void, ir.NewParam("_", types.NewPointer(c.types["char"])))
+	printCharPFn.Linkage = enum.LinkageExternal
+	c.funcs["__print_charp__"] = printCharPFn
+
+	printLnFn := module.NewFunc("__print_ln__", types.Void)
+	printLnFn.Linkage = enum.LinkageExternal
+	c.funcs["__print_ln__"] = printLnFn
+
+	printBoolFn := module.NewFunc("__print__bool__", types.Void, ir.NewParam("_", c.types["bool"]))
+	printBoolFn.Linkage = enum.LinkageExternal
+	c.funcs["__print_bool__"] = printBoolFn
 }
 
 func (c *Compiler) resolveType(expr Expr) types.Type {
@@ -524,6 +582,10 @@ func (c *Compiler) compileIfStmt(stmt *IfStmt) {
 		thenBlock.NewBr(continueBlock)
 	}
 
+	if c.currentBlock.Term == nil {
+		c.currentBlock.NewBr(continueBlock)
+	}
+
 	if stmt.Else != nil {
 		c.currentBlock = elseBlock
 		c.currentScope = &CompileScope{
@@ -681,6 +743,84 @@ func (c *Compiler) primitiveCasting(funcName string, expr *CallExpr) value.Value
 
 }
 
+func (c *Compiler) callAppend(expr *CallExpr) value.Value {
+	p0 := c.compileExpr(expr.Args[0])
+	p1 := c.compileExpr(expr.Args[1])
+	fun := c.funcs["append"]
+	if _, ok := p1.Type().(*types.PointerType); ok {
+		fun = c.funcs["appendp"]
+	}
+	a1 := c.currentBlock.NewAlloca(p1.Type())
+	if p11, ok := p1.(*ir.InstAlloca); ok {
+		c.memcpyInternal(a1, p11)
+	} else {
+		c.currentBlock.NewStore(p1, a1)
+	}
+
+	c1 := c.currentBlock.NewBitCast(a1, types.NewPointer(types.I8))
+	return c.currentBlock.NewCall(fun, p0.(*ir.InstLoad).Src, c1)
+}
+
+func (c *Compiler) callPrint(expr *CallExpr, newline bool) value.Value {
+	var val value.Value
+	arg := c.compileExpr(expr.Args[0])
+	switch t := arg.Type().(type) {
+	case *types.IntType:
+		if t.BitSize == 1 {
+			fun := c.funcs["__print_bool__"]
+			val = c.currentBlock.NewCall(fun, arg)
+		} else if t.BitSize == 8 {
+			// TODO handle by context type (char or i8)
+			fun := c.funcs["__print_char__"]
+			val = c.currentBlock.NewCall(fun, arg)
+		} else if t.BitSize == 16 {
+			fun := c.funcs["__print_i16__"]
+			val = c.currentBlock.NewCall(fun, arg)
+		} else if t.BitSize == 32 {
+			fun := c.funcs["__print_i32__"]
+			val = c.currentBlock.NewCall(fun, arg)
+		} else if t.BitSize == 64 {
+			fun := c.funcs["__print_i64__"]
+			val = c.currentBlock.NewCall(fun, arg)
+		} else {
+			panic("could not find func for i" + strconv.FormatUint(t.BitSize, 10))
+		}
+	case *types.FloatType:
+		if t.Kind == types.FloatKindHalf {
+			val = c.currentBlock.NewCall(c.funcs["__print_f16__"], arg)
+		} else if t.Kind == types.FloatKindFloat {
+			val = c.currentBlock.NewCall(c.funcs["__print_f32__"], arg)
+		} else if t.Kind == types.FloatKindDouble {
+			val = c.currentBlock.NewCall(c.funcs["__print_f64__"], arg)
+		} else {
+			panic("could not find func for float")
+		}
+	case *types.StructType:
+		if t.Name() == "string" {
+			alloca := c.currentBlock.NewAlloca(arg.Type())
+			c.memcpyInternal(alloca, arg.(*ir.InstLoad).Src)
+			arg = alloca
+			val = c.currentBlock.NewCall(c.funcs["__print_str__"], arg)
+		} else {
+			panic("could not find func for unknown struct type")
+		}
+	case *types.PointerType:
+		if t.ElemType.Equal(c.types["char"]) {
+			val = c.currentBlock.NewCall(c.funcs["__print_charp__"], arg)
+		} else {
+			panic("unknown case")
+		}
+	default:
+		panic("unknown print value")
+	}
+
+	if newline {
+		return c.currentBlock.NewCall(c.funcs["__print_ln__"])
+	}
+
+	return val
+}
+
 func (c *Compiler) customCall(expr *CallExpr) value.Value {
 	var funcName string
 	switch e := expr.Left.(type) {
@@ -691,18 +831,11 @@ func (c *Compiler) customCall(expr *CallExpr) value.Value {
 	}
 
 	if funcName == "append" {
-		fun := c.funcs["append"]
-		p0 := c.compileExpr(expr.Args[0])
-		p1 := c.compileExpr(expr.Args[1])
-		a1 := c.currentBlock.NewAlloca(p1.Type())
-		if p11, ok := p1.(*ir.InstAlloca); ok {
-			c.memcpyInternal(a1, p11)
-		} else {
-			c.currentBlock.NewStore(p1, a1)
-		}
-
-		c1 := c.currentBlock.NewBitCast(a1, types.NewPointer(types.I8))
-		return c.currentBlock.NewCall(fun, p0.(*ir.InstLoad).Src, c1)
+		return c.callAppend(expr)
+	} else if funcName == "print" {
+		return c.callPrint(expr, false)
+	} else if funcName == "println" {
+		return c.callPrint(expr, true)
 	} else {
 		panic("Unimplemented custom call")
 	}
@@ -964,10 +1097,12 @@ func (c *Compiler) getThisArg(expr Expr) value.Value {
 			case *ir.InstAlloca:
 				elemType = s1.ElemType
 				returnVal = s1
+			case *ir.InstGetElementPtr:
+				elemType = s1.ElemType
+				returnVal = s
 			case *ir.InstLoad:
 				elemType = s1.ElemType
 				returnVal = s1
-				return s1
 			default:
 				panic("unimplemented case")
 			}
@@ -1352,21 +1487,29 @@ func (c *Compiler) compileExpr(expr Expr) value.Value {
 				gep := c.currentBlock.NewGetElementPtr(types.I8, loadCharPointer, index)
 				return c.currentBlock.NewLoad(types.I8, gep)
 			} else if t.Name() == "slice" {
-				data := c.call(&CallExpr{
-					Left: &IdentExpr{Name: "access_slice_data"},
-					Args: []Expr{
-						expr.Left,
-						expr.Index,
-					},
-				})
+
 				sourceBaseType := expr.ctx.sourceBaseType
 				if expr.ctx.isPointer {
-					c1 := c.currentBlock.NewBitCast(data, types.NewPointer(types.NewPointer(c.types[sourceBaseType])))
-					l1 := c.currentBlock.NewLoad(types.NewPointer(c.types[sourceBaseType]), c1)
-					return l1
+					data := c.call(&CallExpr{
+						Left: &IdentExpr{Name: "access_slice_datap"},
+						Args: []Expr{
+							expr.Left,
+							expr.Index,
+						},
+					})
+					alloc := c.currentBlock.NewAlloca(types.NewPointer(c.types[sourceBaseType]))
+					c.currentBlock.NewStore(c.currentBlock.NewIntToPtr(data, types.NewPointer(c.types[sourceBaseType])), alloc)
+					return c.currentBlock.NewLoad(types.NewPointer(c.types[sourceBaseType]), alloc)
 				} else {
-					cast := c.currentBlock.NewBitCast(data, types.NewPointer(c.types[sourceBaseType]))
-					return c.currentBlock.NewLoad(c.types[sourceBaseType], cast)
+					data := c.call(&CallExpr{
+						Left: &IdentExpr{Name: "access_slice_data"},
+						Args: []Expr{
+							expr.Left,
+							expr.Index,
+						},
+					})
+					itoptr := c.currentBlock.NewIntToPtr(data, types.NewPointer(c.types[sourceBaseType]))
+					return c.currentBlock.NewLoad(c.types[sourceBaseType], itoptr)
 				}
 			} else {
 				panic("Index operation cannot be used with non-array type")

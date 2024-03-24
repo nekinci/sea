@@ -10,7 +10,6 @@
 
 #pragma clang diagnostic ignored "-Wvarargs"
 
-
 typedef struct {
     char* buffer;
     size_t size;
@@ -22,6 +21,7 @@ typedef struct {
    size_t size;
    size_t cap;
 } slice;
+
 
 slice make_slice() {
     slice s;
@@ -45,14 +45,25 @@ void append_slice_data(slice* s, char* data) {
     s -> size++;
 }
 
+void append_slice_datap(slice* s, char** data) {
+    if (s == NULL) {
+        printf("Null reference access error: \n");
+        exit(1);
+    }
+
+
+    if (s -> size >= s -> cap) {
+        s -> cap = s -> cap * 2;
+        s -> data_list = realloc(s -> data_list, sizeof(char**) * s -> cap);
+    }
+
+    *(s -> data_list + s -> size) = *data;
+    s -> size++;
+}
+
 long len_slice(slice s) {
     return s.size;
 }
-typedef struct {
-    long a;
-    long b;
-    long c;
-} K;
 
 char* access_slice_data(slice s, int index) {
     if (index >= s.size) {
@@ -61,6 +72,17 @@ char* access_slice_data(slice s, int index) {
     }
 
     char** data = (char**)(s.data_list + index);
+    return *data;
+}
+
+char* access_slice_datap(slice s, int index) {
+    if (index >= s.size) {
+        printf("Index out of bound error occurred: %d, slice size is: %zu", index, s.size);
+        exit(255);
+    }
+
+    char **data = (char**)(s.data_list + index);
+    long* t = (long*)(*data);
     return *data;
 }
 
@@ -75,24 +97,6 @@ string make_string(char* buffer) {
     result.size = size;
     result.cap = 51;
     return result;
-}
-
-
-int r_runtime_scanf(const char* fmt, ...) {
-    va_list args;
-    va_start(args, fmt);
-    int r = vscanf(fmt, args);
-    va_end(args);
-    return r;
-}
-
-
-int r_runtime_printf(const char* fmt, ...) {
-    va_list args;
-    va_start(args, fmt);
-    int r = vprintf(fmt, args);
-    va_end(args);
-    return r;
 }
 
 int printf_internal(const char* str, ...) {
@@ -118,20 +122,6 @@ void* malloc_internal(size_t s) {
 size_t strlen_internal(string str) {
     return str.size;
 }
-
-int sum(int a, int b) {
-    return a +b;
-}
-
-void r_runtime_exit(int status) {
-    exit(status);
-}
-
-int open_internal(const char* path, int oflag) {
-// TODO implement that function to handle file operations
-    exit(38);
-}
-
 
 string cstr_append(string s, char c, int* cap) {
   if (*cap == 0) {
@@ -180,24 +170,9 @@ void puts_int(int a) {
 }
 
 int puts_str(string s) {
-    return puts(s.buffer);
+    return fputs(s.buffer, stdout);
 }
 
-
-void doSomething(int* ptr) {
-    ptr[1] = 11;
-    printf("%d\n", ptr[0]);
-}
-
-int main2() {
-    return 0;
-}
-
-
-void h_s(int signo) {
-    printf("caught signal %d\n", signo);
-    exit(255);
-}
 
 char* to_char_pointer(string s) {
     return s.buffer;
@@ -251,36 +226,56 @@ int str_len(string str) {
     return str.size;
 }
 
-void handle_signal() {
-    signal(SIGSEGV, h_s);
+void __print_str__(string s) {
+    if (s.size > 0) {
+        fputs(s.buffer, stdout);
+    }
 }
 
-struct JsonNode {
-    string kind;
+void __print_char__(char c) {
+    fputc(c, stdout);
+}
 
-    string numberValue;
-    string boolValue;
+void __print_i8__(short s) {
+    printf("%d", s);
+}
 
-    string stringValue;
+void __print_i16__(int s) {
+    printf("%d", s);
+}
 
-    slice key_value_nodes;
+void __print_i32__(int s) {
+    printf("%d", s);
+}
 
-    string key;
+void __print_i64__(long s) {
+    printf("%ld", s);
+}
 
-    struct JsonNode* value;
+void __print_f16__(float f) {
+    printf("%f", f);
+}
 
-    slice elems;
+void __print_f32__(float f) {
+    printf("%f", f);
+}
 
-};
+void __print_f64__(double f) {
+    printf("%f", f);
+}
 
-typedef struct JsonNode JsonNode;
+void __print_charp__(const char* buffer) {
+    fputs(buffer, stdout);
+}
 
-void print_JsonNodeInC(JsonNode* jsonNode) {
+void __print_ln__() {
+    fputs("\n", stdout);
+}
 
-    char** data = jsonNode -> elems.data_list + 0;
-    char *d = *data;
-    uintptr_t d2 = d;
-    JsonNode* newm = malloc(sizeof(JsonNode));
-    int a = 5;
-    printf("%p %p--- in c\n", newm, d2);
+void __print__bool__(int b) {
+    if (b == 0) {
+        fputs("false", stdout);
+    } else {
+        fputs("true", stdout);
+    }
 }

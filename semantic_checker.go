@@ -319,6 +319,45 @@ func (c *Checker) initGlobalScope() {
 		Completed:   true,
 		GenericType: "!T",
 	})
+	AssertErr(err)
+
+	err = c.addSymbol("print", &FuncDef{
+		Name: "print",
+		Type: "void",
+		Params: []Param{
+			{
+				Name: "buffer",
+				Type: "context_based<i8,i16,i32,i64,char,bool,string,f16,f32,f64, pointer<char>>",
+			},
+		},
+		MethodOf:    "",
+		External:    false,
+		Variadic:    false,
+		Completed:   false,
+		TypeCast:    false,
+		CheckParams: false,
+		GenericType: "",
+	})
+	AssertErr(err)
+
+	err = c.addSymbol("println", &FuncDef{
+		Name: "println",
+		Type: "void",
+		Params: []Param{
+			{
+				Name: "buffer",
+				Type: "context_based<i8,i16,i32,i64,char,bool,string,f16,f32,f64, pointer<char>>",
+			},
+		},
+		MethodOf:    "",
+		External:    false,
+		Variadic:    false,
+		Completed:   false,
+		TypeCast:    false,
+		CheckParams: false,
+		GenericType: "",
+	})
+	AssertErr(err)
 }
 
 func (scope *Scope) LookupSym(name string) Symbol {
@@ -519,6 +558,16 @@ func (c *Checker) isSlice(name string) bool {
 	return strings.HasPrefix(name, "slice<")
 }
 
+func (c *Checker) isContextBased(name string) bool {
+	return strings.HasPrefix(name, "context_based<")
+}
+
+func (c *Checker) extractContextBasedTypes(name string) []string {
+	name = strings.Replace(name, "context_based<", "", 1)
+	name = strings.Replace(name, ">", "", 1)
+	return strings.Split(name, ",")
+}
+
 func (c *Checker) checkTypeCompatibility(typ1, exprType string) bool {
 	if strings.HasPrefix(exprType, "auto_cast<") {
 		n := c.extractType(exprType)
@@ -553,6 +602,15 @@ func (c *Checker) checkTypeCompatibility(typ1, exprType string) bool {
 		exprTypeBase := c.extractBaseType(exprType)
 		if typ1Base != exprTypeBase {
 			return false
+		}
+	}
+
+	if c.isContextBased(typ1) {
+		possibleTypes := c.extractContextBasedTypes(typ1)
+		for _, t := range possibleTypes {
+			if t == exprType {
+				return true
+			}
 		}
 	}
 
@@ -1312,7 +1370,7 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 
 		// TODO come up with the cleanest solution
 		var isMalloc = funcDef.Name == "malloc_internal" && funcDef.MethodOf == ""
-		ctx.isCustomCall = funcDef.Name == "append" && funcDef.MethodOf == ""
+		ctx.isCustomCall = (funcDef.Name == "append" || funcDef.Name == "print" || funcDef.Name == "println") && funcDef.MethodOf == ""
 		var resolvedGenericType string
 		if !funcDef.TypeCast {
 			for i, _ := range expr.Args {
@@ -1355,7 +1413,11 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 						c.errorf(start, end, "expected %s, got %s", argType, t)
 						err = fmt.Errorf("expected %s, got %s", argType, t)
 					} else {
-						c.setVarAssignCtxFields(ctx, argType, c.LookupSym(c.extractBaseType(argType)).(*TypeDef))
+						var ctxTyp = argType
+						if c.isContextBased(argType) {
+							ctxTyp = t
+						}
+						c.setVarAssignCtxFields(ctx, argType, c.LookupSym(c.extractBaseType(ctxTyp)).(*TypeDef))
 					}
 					c.leaveCtx()
 				}
