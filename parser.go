@@ -554,7 +554,8 @@ func (p *Parser) parseSimpleExpr() Expr {
 		var elems = make([]Expr, 0)
 		arrayValue := &ArrayLitExpr{start: p.startOfLastExpected()}
 		for p.curTok != TokRBracket {
-			elems = append(elems, p.parseExpr())
+			expr := p.parseExpr()
+			elems = append(elems, p.parseObjLiteral(expr))
 			if p.curTok == TokComma {
 				p.expect(TokComma)
 			}

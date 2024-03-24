@@ -33,6 +33,7 @@ type Param struct {
 	Name                string
 	Type                string
 	GenericTypeResolver bool
+	Optional            bool
 }
 
 type TypeDef struct {
@@ -327,7 +328,7 @@ func (c *Checker) initGlobalScope() {
 		Params: []Param{
 			{
 				Name: "buffer",
-				Type: "context_based<i8,i16,i32,i64,char,bool,string,f16,f32,f64, pointer<char>>",
+				Type: "context_based<i8,i16,i32,i64,char,bool,string,f16,f32,f64,pointer<char>>",
 			},
 		},
 		MethodOf:    "",
@@ -345,8 +346,9 @@ func (c *Checker) initGlobalScope() {
 		Type: "void",
 		Params: []Param{
 			{
-				Name: "buffer",
-				Type: "context_based<i8,i16,i32,i64,char,bool,string,f16,f32,f64, pointer<char>>",
+				Name:     "buffer",
+				Type:     "context_based<i8,i16,i32,i64,char,bool,string,f16,f32,f64,pointer<char>>",
+				Optional: true,
 			},
 		},
 		MethodOf:    "",
@@ -1356,7 +1358,16 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 		funcDef := c.currentSym.(*FuncDef)
 		expr.TypeCast = funcDef.TypeCast
 		expr.MethodOf = funcDef.MethodOf
-		if !funcDef.Variadic && len(funcDef.Params) != len(expr.Args) && !funcDef.TypeCast {
+
+		var optionalCount = 0
+		for _, p := range funcDef.Params {
+			if p.Optional {
+				optionalCount++
+			}
+		}
+
+		if !funcDef.Variadic && (len(funcDef.Params) != len(expr.Args) && len(funcDef.Params)-optionalCount != len(expr.Args)) && !funcDef.TypeCast {
+
 			start, end := expr.Pos()
 			c.errorf(start, end, "expected %d arguments, got %d", len(funcDef.Params), len(expr.Args))
 			err = fmt.Errorf("expected %d arguments, got %d", len(funcDef.Params), len(expr.Args))

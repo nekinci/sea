@@ -31,6 +31,7 @@ slice make_slice() {
     return s;
 }
 
+
 void append_slice_data(slice* s, char* data) {
     if (s == NULL) {
         printf("Null reference access error: \n");
@@ -70,7 +71,6 @@ char* access_slice_data(slice s, int index) {
         printf("Index out of bound error occurred: %d, slice size is: %zu", index, s.size);
         exit(255);
     }
-
     char** data = (char**)(s.data_list + index);
     return *data;
 }

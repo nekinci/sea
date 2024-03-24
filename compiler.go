@@ -743,13 +743,17 @@ func (c *Compiler) primitiveCasting(funcName string, expr *CallExpr) value.Value
 
 }
 
-func (c *Compiler) callAppend(expr *CallExpr) value.Value {
-	p0 := c.compileExpr(expr.Args[0])
-	p1 := c.compileExpr(expr.Args[1])
+func (c *Compiler) _callAppend(p0, p1 value.Value) value.Value {
 	fun := c.funcs["append"]
-	if _, ok := p1.Type().(*types.PointerType); ok {
-		fun = c.funcs["appendp"]
+
+	if _, ok := p1.(*ir.InstAlloca); ok {
+		fun = c.funcs["append"]
+	} else {
+		if _, ok := p1.Type().(*types.PointerType); ok {
+			fun = c.funcs["appendp"]
+		}
 	}
+
 	a1 := c.currentBlock.NewAlloca(p1.Type())
 	if p11, ok := p1.(*ir.InstAlloca); ok {
 		c.memcpyInternal(a1, p11)
@@ -761,57 +765,67 @@ func (c *Compiler) callAppend(expr *CallExpr) value.Value {
 	return c.currentBlock.NewCall(fun, p0.(*ir.InstLoad).Src, c1)
 }
 
+func (c *Compiler) callAppend(expr *CallExpr) value.Value {
+	p0 := c.compileExpr(expr.Args[0])
+	p1 := c.compileExpr(expr.Args[1])
+	return c._callAppend(p0, p1)
+}
+
 func (c *Compiler) callPrint(expr *CallExpr, newline bool) value.Value {
 	var val value.Value
-	arg := c.compileExpr(expr.Args[0])
-	switch t := arg.Type().(type) {
-	case *types.IntType:
-		if t.BitSize == 1 {
-			fun := c.funcs["__print_bool__"]
-			val = c.currentBlock.NewCall(fun, arg)
-		} else if t.BitSize == 8 {
-			// TODO handle by context type (char or i8)
-			fun := c.funcs["__print_char__"]
-			val = c.currentBlock.NewCall(fun, arg)
-		} else if t.BitSize == 16 {
-			fun := c.funcs["__print_i16__"]
-			val = c.currentBlock.NewCall(fun, arg)
-		} else if t.BitSize == 32 {
-			fun := c.funcs["__print_i32__"]
-			val = c.currentBlock.NewCall(fun, arg)
-		} else if t.BitSize == 64 {
-			fun := c.funcs["__print_i64__"]
-			val = c.currentBlock.NewCall(fun, arg)
-		} else {
-			panic("could not find func for i" + strconv.FormatUint(t.BitSize, 10))
+	if len(expr.Args) == 1 {
+		arg := c.compileExpr(expr.Args[0])
+		switch t := arg.Type().(type) {
+		case *types.IntType:
+			if t.BitSize == 1 {
+				fun := c.funcs["__print_bool__"]
+				val = c.currentBlock.NewCall(fun, arg)
+			} else if t.BitSize == 8 {
+				// TODO handle by context type (char or i8)
+				fun := c.funcs["__print_char__"]
+				val = c.currentBlock.NewCall(fun, arg)
+			} else if t.BitSize == 16 {
+				fun := c.funcs["__print_i16__"]
+				val = c.currentBlock.NewCall(fun, arg)
+			} else if t.BitSize == 32 {
+				fun := c.funcs["__print_i32__"]
+				val = c.currentBlock.NewCall(fun, arg)
+			} else if t.BitSize == 64 {
+				fun := c.funcs["__print_i64__"]
+				val = c.currentBlock.NewCall(fun, arg)
+			} else {
+				panic("could not find func for i" + strconv.FormatUint(t.BitSize, 10))
+			}
+		case *types.FloatType:
+			if t.Kind == types.FloatKindHalf {
+				val = c.currentBlock.NewCall(c.funcs["__print_f16__"], arg)
+			} else if t.Kind == types.FloatKindFloat {
+				val = c.currentBlock.NewCall(c.funcs["__print_f32__"], arg)
+			} else if t.Kind == types.FloatKindDouble {
+				val = c.currentBlock.NewCall(c.funcs["__print_f64__"], arg)
+			} else {
+				panic("could not find func for float")
+			}
+		case *types.StructType:
+			if t.Name() == "string" {
+				alloca := c.currentBlock.NewAlloca(arg.Type())
+				c.memcpyInternal(alloca, arg.(*ir.InstLoad).Src)
+				arg = alloca
+				val = c.currentBlock.NewCall(c.funcs["__print_str__"], arg)
+			} else {
+				panic("could not find func for unknown struct type")
+			}
+		case *types.PointerType:
+			if t.ElemType.Equal(c.types["char"]) {
+				val = c.currentBlock.NewCall(c.funcs["__print_charp__"], arg)
+			} else if t.ElemType.Name() == "string" {
+				val = c.currentBlock.NewCall(c.funcs["__print_str__"], arg)
+			} else {
+				panic("unknown case")
+			}
+		default:
+			panic("unknown print value")
 		}
-	case *types.FloatType:
-		if t.Kind == types.FloatKindHalf {
-			val = c.currentBlock.NewCall(c.funcs["__print_f16__"], arg)
-		} else if t.Kind == types.FloatKindFloat {
-			val = c.currentBlock.NewCall(c.funcs["__print_f32__"], arg)
-		} else if t.Kind == types.FloatKindDouble {
-			val = c.currentBlock.NewCall(c.funcs["__print_f64__"], arg)
-		} else {
-			panic("could not find func for float")
-		}
-	case *types.StructType:
-		if t.Name() == "string" {
-			alloca := c.currentBlock.NewAlloca(arg.Type())
-			c.memcpyInternal(alloca, arg.(*ir.InstLoad).Src)
-			arg = alloca
-			val = c.currentBlock.NewCall(c.funcs["__print_str__"], arg)
-		} else {
-			panic("could not find func for unknown struct type")
-		}
-	case *types.PointerType:
-		if t.ElemType.Equal(c.types["char"]) {
-			val = c.currentBlock.NewCall(c.funcs["__print_charp__"], arg)
-		} else {
-			panic("unknown case")
-		}
-	default:
-		panic("unknown print value")
 	}
 
 	if newline {
@@ -1266,10 +1280,7 @@ func (c *Compiler) compileExpr(expr Expr) value.Value {
 
 			for _, elem := range expr.Elems {
 				e := c.compileExpr(elem)
-				alloc2 := c.currentBlock.NewAlloca(e.Type())
-				c.currentBlock.NewStore(e, alloc2)
-				cast := c.currentBlock.NewBitCast(alloc2, types.NewPointer(types.I8))
-				c.currentBlock.NewCall(c.funcs["append"], alloc, cast)
+				c._callAppend(c.currentBlock.NewLoad(c.types["slice"], alloc), e)
 			}
 
 			return alloc
