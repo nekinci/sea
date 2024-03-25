@@ -205,7 +205,7 @@ func (p *Parser) parseFor() *ForStmt {
 	forStmt.Cond = p.parseExpr()
 	if p.curTok == TokSemicolon {
 		p.expect(TokSemicolon)
-		forStmt.Step = p.parseExpr()
+		forStmt.Step = p.parseStmt()
 	}
 
 	forStmt.Body = p.parseStmt()
@@ -239,9 +239,54 @@ func (p *Parser) parseStmt() Stmt {
 		return p.parseFor()
 	case TokVar:
 		return p.parseVar()
+	case TokIncr, TokDecr:
+		return p.parseIncDecrStmt(nil)
 	default:
-		return p.parseExprStmt()
+		exprStmt := p.parseExprStmt()
+		if p.curTok == TokIncr || p.curTok == TokDecr {
+			return p.parseIncDecrStmt(exprStmt.Expr)
+		}
+		return exprStmt
 	}
+}
+
+func (p *Parser) parseIncDecrStmt(expr Expr) Stmt {
+	isPostOperation := expr != nil
+	if p.curTok == TokIncr {
+		p.expect(TokIncr)
+		start, end := p.startOfLastExpected(), p.endOfLastExpected()
+		if expr == nil {
+			expr = p.parseSelectorExpr(bracketIndex)
+		}
+
+		if p.curTok == TokSemicolon {
+			p.expect(TokSemicolon)
+		}
+		return &IncrStmt{
+			Expr:            expr,
+			start:           start,
+			end:             end,
+			IsPostOperation: isPostOperation,
+		}
+	} else {
+		p.expect(TokDecr)
+		start, end := p.startOfLastExpected(), p.endOfLastExpected()
+		if expr == nil {
+			expr = p.parseSelectorExpr(bracketIndex)
+		}
+
+		if p.curTok == TokSemicolon {
+			p.expect(TokSemicolon)
+		}
+
+		return &DecrStmt{
+			Expr:            expr,
+			start:           start,
+			end:             end,
+			IsPostOperation: isPostOperation,
+		}
+	}
+
 }
 
 func (p *Parser) parseTopStmt() Stmt {

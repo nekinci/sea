@@ -410,7 +410,7 @@ func (e *IfStmt) Pos() (Pos, Pos) {
 type ForStmt struct {
 	Init  Stmt
 	Cond  Expr
-	Step  Expr
+	Step  Stmt
 	Body  Stmt
 	start Pos
 	ctx   *ForCtx
@@ -424,6 +424,40 @@ func (e *ForStmt) Pos() (Pos, Pos) {
 func (e *ForStmt) IsStmt() {}
 
 func (e *IfStmt) IsStmt() {}
+
+type IncrStmt struct {
+	Expr            Expr
+	start, end      Pos
+	IsPostOperation bool
+	Type            string
+}
+
+type DecrStmt struct {
+	Expr            Expr
+	start, end      Pos
+	IsPostOperation bool
+	Type            string
+}
+
+func (i *DecrStmt) IsStmt() {}
+func (i *DecrStmt) Pos() (Pos, Pos) {
+	if i.IsPostOperation {
+		start, _ := i.Expr.Pos()
+		return start, i.end
+	}
+	_, end := i.Expr.Pos()
+	return i.start, end
+}
+
+func (i *IncrStmt) IsStmt() {}
+func (i *IncrStmt) Pos() (Pos, Pos) {
+	if i.IsPostOperation {
+		start, _ := i.Expr.Pos()
+		return start, i.end
+	}
+	_, end := i.Expr.Pos()
+	return i.start, end
+}
 
 type ReturnStmt struct {
 	Value      Expr

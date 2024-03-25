@@ -39,7 +39,7 @@ impl JsonNode {
          if this.kind == "array" {
            print_indent(indent)
            println("[")
-           for var i64 i = 0; i < len(this.elems); i = i + 1; {
+           for var i64 i = 0; i < len(this.elems); ++i; {
                 this.elems[i].print_node(indent + 1)
            }
            print_indent(indent)
@@ -47,7 +47,7 @@ impl JsonNode {
          } else if this.kind == "object" {
             print_indent(indent)
             println("{")
-            for var i64 i = 0; i < len(this.key_value_nodes); i = i + 1; {
+            for var i64 i = 0; i < len(this.key_value_nodes); i = i++ {
                 this.key_value_nodes[i].print_node(indent + 1)
                 if i != len(this.key_value_nodes) - 1 {
                     print(",")
@@ -300,7 +300,7 @@ fun string value_node_str(JsonNode* jsonNode) {
 
 
 fun void print_indent(i32 indent) {
-    for var i32 i = 0; i < indent; i = i + 1; {
+    for var i32 i = 0; i < indent; i++ {
         printf_internal(" ")
     }
     return
@@ -320,11 +320,5 @@ fun i32 main(i32 argc) {
             is_initialized: false,
             file_len: cast_i64(str_len(file))
       }
-
-    var A*[] elems = [&A{a: 1, b: 2, c:3}]
-    println(".." + "..." + "...")
-    var JsonNode* ptr = new(JsonNode)
-    *ptr = JsonNode{kind: "abcdef"}
-    println(ptr.kind)
     return 0
 }

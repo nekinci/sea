@@ -802,6 +802,24 @@ func (c *Checker) checkImplStmt(stmt *ImplStmt) {
 
 }
 
+func (c *Checker) checkIncrStmt(stmt *IncrStmt) {
+	typ, _ := c.checkExpr(stmt.Expr)
+	if !isNumber(typ) {
+		start, end := stmt.Pos()
+		c.errorf(start, end, "incr(++) stmt only valid on numeric expressions")
+	}
+	stmt.Type = typ
+}
+
+func (c *Checker) checkDecrStmt(stmt *DecrStmt) {
+	typ, _ := c.checkExpr(stmt.Expr)
+	if !isNumber(typ) {
+		start, end := stmt.Pos()
+		c.errorf(start, end, "decr(--) stmt only valid on numeric expressions")
+	}
+	stmt.Type = typ
+}
+
 func (c *Checker) checkStmt(stmt Stmt) {
 	switch stmt := stmt.(type) {
 	case *BlockStmt:
@@ -812,6 +830,10 @@ func (c *Checker) checkStmt(stmt Stmt) {
 		c.checkImplStmt(stmt)
 	case *ExprStmt:
 		c.checkExprStmt(stmt)
+	case *IncrStmt:
+		c.checkIncrStmt(stmt)
+	case *DecrStmt:
+		c.checkDecrStmt(stmt)
 	case *ReturnStmt:
 		stmt.setCtx(c.ctx)
 		var exprType = "void"
@@ -872,12 +894,7 @@ func (c *Checker) checkStmt(stmt Stmt) {
 		}
 
 		if stmt.Step != nil {
-			_, err := c.checkExpr(stmt.Step)
-			if err != nil {
-				start, end := stmt.Cond.Pos()
-				c.errorf(start, end, "invalid for condition")
-				return
-			}
+			c.checkStmt(stmt.Step)
 		}
 
 		c.checkStmt(stmt.Body)

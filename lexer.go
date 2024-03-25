@@ -50,7 +50,8 @@ func (l *Lexer) operatorToken() Token {
 	switch ch {
 	case '+':
 		if l.input[l.pos] == '+' {
-			// TODO
+			l.pos++
+			return TokIncr
 		}
 
 		if l.input[l.pos] == '=' {
@@ -60,7 +61,8 @@ func (l *Lexer) operatorToken() Token {
 		return TokPlus
 	case '-':
 		if l.input[l.pos] == '-' {
-			// TODO
+			l.pos++
+			return TokDecr
 		}
 
 		if l.input[l.pos] == '=' {

@@ -484,6 +484,28 @@ func (c *Compiler) compileStructDef(def *StructDefStmt) {
 	}
 }
 
+func (c *Compiler) getNumericConstant(number float64, typ string) constant.Constant {
+	if typ == "f16" {
+		return constant.NewFloat(types.Half, number)
+	} else if typ == "f32" {
+		return constant.NewFloat(types.Float, number)
+	} else if typ == "f64" {
+		return constant.NewFloat(types.Double, number)
+	} else if typ == "i8" {
+		return constant.NewInt(types.I8, int64(number))
+	} else if typ == "i16" {
+		return constant.NewInt(types.I16, int64(number))
+	} else if typ == "i32" {
+		return constant.NewInt(types.I32, int64(number))
+	} else if typ == "i64" {
+		return constant.NewInt(types.I64, int64(number))
+	} else if typ == "char" {
+		return constant.NewInt(types.I8, int64(number))
+	}
+
+	return constant.NewInt(types.I32, int64(number))
+}
+
 func (c *Compiler) compileStmt(stmt Stmt) {
 	switch innerStmt := stmt.(type) {
 	case *ReturnStmt:
@@ -550,7 +572,14 @@ func (c *Compiler) compileStmt(stmt Stmt) {
 				c.compileFunc(implStmt, true, thisType, false)
 			}
 		}
-
+	case *IncrStmt:
+		e := c.compileExpr(innerStmt.Expr)
+		val := generateOperation(c.currentBlock, e, c.getNumericConstant(1.0, innerStmt.Type), Add)
+		c.currentBlock.NewStore(val, e.(*ir.InstLoad).Src)
+	case *DecrStmt:
+		e := c.compileExpr(innerStmt.Expr)
+		val := generateOperation(c.currentBlock, e, c.getNumericConstant(1.0, innerStmt.Type), Sub)
+		c.currentBlock.NewStore(val, e.(*ir.InstLoad).Src)
 	default:
 		panic("unreachable compileStmt on compiler")
 
@@ -653,7 +682,7 @@ func (c *Compiler) compileForStmt(stmt *ForStmt) {
 	if stmt.Step != nil {
 		c.currentBlock = stepBlock
 		stmt.ctx.continueBlock = stepBlock
-		c.compileExpr(stmt.Step)
+		c.compileStmt(stmt.Step)
 		stepBlock.NewBr(condBlock)
 	} else {
 		stepBlock.NewBr(condBlock)

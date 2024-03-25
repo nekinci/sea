@@ -9,7 +9,9 @@ func (t Token) String() string {
 const (
 	EOF              Token = "<eof>"
 	TokPlus          Token = "+"
+	TokIncr          Token = "++"
 	TokMinus         Token = "-"
+	TokDecr          Token = "--"
 	TokMultiply      Token = "*"
 	TokDivision      Token = "/"
 	TokMod           Token = "%"
