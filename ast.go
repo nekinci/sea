@@ -141,6 +141,7 @@ func (u *UnaryExpr) Pos() (Pos, Pos) {
 type AssignExpr struct {
 	Left  Expr
 	Right Expr
+	Op    string
 	ctx   *VarAssignCtx
 }
 

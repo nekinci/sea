@@ -5,9 +5,8 @@ extern fun i32 str_len(string str)
 extern fun void exit(i32 code)
 extern fun void handle_signal()
 extern fun char* to_char_pointer(string s)
-extern fun void print_JsonNodeInC(JsonNode* jsonNode)
 
-
+/*
 struct JsonNode {
     # node kind
     string kind
@@ -311,14 +310,17 @@ struct A {
     i64 c
 }
 
+*/
+
 # main function
 fun i32 main(i32 argc) {
-      var string file = open_file_read("./example.json")
+     /* var string file = open_file_read("./example.json")
       var JsonParser* jsonParser = &JsonParser{
             file: file,
             current_pos: 0,
             is_initialized: false,
             file_len: cast_i64(str_len(file))
-      }
-    return 0
+      }*/
+
+   return 0
 }

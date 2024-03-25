@@ -51,35 +51,50 @@ func (l *Lexer) operatorToken() Token {
 	case '+':
 		if l.input[l.pos] == '+' {
 			l.pos++
+			l.col++
 			return TokIncr
 		}
 
 		if l.input[l.pos] == '=' {
-			// TODO
+			l.pos++
+			l.col++
+			return TokPlusAssign
 		}
 
 		return TokPlus
 	case '-':
 		if l.input[l.pos] == '-' {
 			l.pos++
+			l.col++
 			return TokDecr
 		}
 
 		if l.input[l.pos] == '=' {
-			// TODO
+			l.pos++
+			l.col++
+			return TokMinusAssign
 		}
 
 		return TokMinus
 	case '*':
 		if l.input[l.pos] == '=' {
+			l.pos++
+			l.col++
+			return TokMultiplyAssign
 		}
 		return TokMultiply
 	case '/':
 		if l.input[l.pos] == '=' {
+			l.pos++
+			l.col++
+			return TokDivisionAssign
 		}
 		return TokDivision
 	case '%':
 		if l.input[l.pos] == '=' {
+			l.pos++
+			l.col++
+			return TokModAssign
 		}
 		return TokMod
 	}
@@ -319,6 +334,13 @@ func (l *Lexer) tok() Token {
 			l.col++
 			return TokAnd
 		}
+
+		if l.input[l.pos] == '=' {
+			l.pos++
+			l.col++
+			return TokBAndAssign
+		}
+
 		return TokBAnd
 	case c == '|':
 		l.pos++
@@ -328,10 +350,18 @@ func (l *Lexer) tok() Token {
 			l.col++
 			return TokOr
 		}
+		if l.input[l.pos] == '=' {
+			l.pos++
+			l.col++
+			return TokBOrAssign
+		}
 		return TokBOr
 	case c == '^':
 		l.pos++
 		l.col++
+		if l.pos < l.inputLen && l.input[l.pos] == '=' {
+			return TokXorAssign
+		}
 		return TokXor
 	case c == '<':
 		l.pos++
@@ -345,6 +375,11 @@ func (l *Lexer) tok() Token {
 		if l.input[l.pos] == '<' {
 			l.pos++
 			l.col++
+			if l.pos < l.inputLen && l.input[l.pos] == '=' {
+				l.pos++
+				l.col++
+				return TokLShiftAssign
+			}
 			return TokLShift
 		}
 
@@ -355,6 +390,11 @@ func (l *Lexer) tok() Token {
 		if l.input[l.pos] == '=' {
 			l.pos += 1
 			l.col++
+			if l.pos < l.inputLen && l.input[l.pos] == '=' {
+				l.pos++
+				l.col++
+				return TokRShiftAssign
+			}
 			return TokGte
 		}
 

@@ -46,7 +46,6 @@ func main() {
 	_ = os.Setenv("DEBUG", "")
 	Target = "arm64-apple-darwin23.1.0" // TODO
 	compiler := &Compiler{}
-
 	// read compileExpr from file
 	file, err := os.ReadFile("./input.sea")
 	parser := NewParser("./input.sea")

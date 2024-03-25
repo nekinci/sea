@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"slices"
 	"strconv"
 )
 
@@ -481,6 +482,34 @@ func (p *Parser) op(tok Token) Operation {
 		return Band
 	case TokNot:
 		return Not
+	case TokBOr:
+		return Bor
+	case TokLShift:
+		return LShift
+	case TokRShift:
+		return RShift
+	case TokModAssign:
+		return Mod
+	case TokXorAssign:
+		return Xor
+	case TokDivisionAssign:
+		return Div
+	case TokRShiftAssign:
+		return RShift
+	case TokLShiftAssign:
+		return LShift
+	case TokMinusAssign:
+		return Sub
+	case TokMultiplyAssign:
+		return Mul
+	case TokBOrAssign:
+		return Bor
+	case TokPlusAssign:
+		return Add
+	case TokBAndAssign:
+		return Band
+	case TokMod:
+		return Mod
 	default:
 		panic("unreachable op=" + string(tok))
 	}
@@ -592,6 +621,22 @@ func (p *Parser) parseKeyValueExpr() *KeyValueExpr {
 	return kv
 }
 
+func (p *Parser) assignTokens() []Token {
+	return []Token{
+		TokAssign,
+		TokPlusAssign,
+		TokMinusAssign,
+		TokMultiplyAssign,
+		TokDivisionAssign,
+		TokModAssign,
+		TokXorAssign,
+		TokBAndAssign,
+		TokBOrAssign,
+		TokLShiftAssign,
+		TokRShiftAssign,
+	}
+}
+
 func (p *Parser) parseSimpleExpr() Expr {
 	switch p.curTok {
 	case TokLBracket:
@@ -673,7 +718,7 @@ func (p *Parser) parseSimpleExpr() Expr {
 		return &ParenExpr{Expr: expr, start: start, end: p.endOfLastExpected()}
 	case TokIdentifier:
 		var identExpr = p.parseSelectorExpr(bracketIndex)
-		if p.curTok == TokAssign {
+		if slices.Contains(p.assignTokens(), p.curTok) {
 			return p.parseAssignExpr(identExpr)
 		}
 		return identExpr
@@ -714,14 +759,22 @@ func (p *Parser) parsePackageStmt() *PackageStmt {
 }
 
 func (p *Parser) parseAssignExpr(identExpr Expr) *AssignExpr {
-	p.expect(TokAssign)
+	tok, op := p.expectAnyOf(p.assignTokens()...)
 	var expr = p.parseExpr()
 	if p.curTok == TokSemicolon {
 		p.expect(TokSemicolon)
 	} else {
-		expr = p.parseObjLiteral(expr)
+		if op == "=" {
+			expr = p.parseObjLiteral(expr)
+		} else {
+			expr = &BinaryExpr{
+				Left:  identExpr,
+				Right: expr,
+				Op:    p.op(tok),
+			}
+		}
 	}
-	assignExpr := &AssignExpr{identExpr, expr, nil}
+	assignExpr := &AssignExpr{identExpr, expr, op, nil}
 	return assignExpr
 }
 

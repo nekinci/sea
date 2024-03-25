@@ -1613,10 +1613,13 @@ const (
 	Not
 	And
 	Band
+	Bor
 	Or
 	Sizeof
 	Xor
 	New
+	LShift
+	RShift
 )
 
 func (o Operation) String() string {
