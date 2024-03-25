@@ -298,6 +298,18 @@ func (c *Compiler) initBuiltinFuncs() {
 	printBoolFn := module.NewFunc("__print__bool__", types.Void, ir.NewParam("_", c.types["bool"]))
 	printBoolFn.Linkage = enum.LinkageExternal
 	c.funcs["__print_bool__"] = printBoolFn
+
+	c.addToStrFuncs("i8", "i16", "i32", "i64", "f16", "f32", "f64", "bool")
+}
+
+func (c *Compiler) addToStrFuncs(names ...string) {
+	for _, name := range names {
+		n := fmt.Sprintf("__%s_to_string__", name)
+		fn := c.module.NewFunc(n, types.Void,
+			c.NewReturnParameter("str", c.types["string"]), ir.NewParam("p", c.types[name]))
+		fn.Linkage = enum.LinkageExternal
+		c.funcs[n] = fn
+	}
 }
 
 func (c *Compiler) resolveType(expr Expr) types.Type {
@@ -725,51 +737,63 @@ func getFloatBit(t *types.FloatType) int64 {
 	}
 }
 
-func (c *Compiler) primitiveCasting(funcName string, expr *CallExpr) value.Value {
-	toTyp := strings.Replace(funcName, "cast_", "", 1)
+func (c *Compiler) doCast(funcName string, expr *CallExpr) value.Value {
+	toTyp := strings.Replace(funcName, "to_", "", 1)
 	arg := c.compileExpr(expr.Args[0])
-	typ := c.resolveType(&IdentExpr{Name: toTyp})
 
+	return c.castType(toTyp, arg, expr.GetCtx().(*CallCtx).typeCastParamType)
+
+}
+
+func (c *Compiler) castType(toTyp string, arg value.Value, paramType string) value.Value {
 	toBit := strings.Replace(strings.Replace(toTyp, "i", "", 1), "f", "", 1)
 	i, err := strconv.ParseInt(toBit, 10, 64)
-	AssertErr(err)
+	if err == nil {
+		typ := c.resolveType(&IdentExpr{Name: toTyp})
+		if strings.HasPrefix(toTyp, "i") {
+			switch t := arg.Type().(type) {
+			case *types.IntType:
+				if uint64(i) > t.BitSize {
+					return c.currentBlock.NewSExt(arg, typ)
+				} else if uint64(i) == t.BitSize {
+					return arg
+				} else {
+					return c.currentBlock.NewTrunc(arg, typ)
+				}
+			case *types.FloatType:
+				return c.currentBlock.NewFPToSI(arg, typ)
 
-	if strings.HasPrefix(toTyp, "i") {
-		switch t := arg.Type().(type) {
-		case *types.IntType:
-			if uint64(i) > t.BitSize {
-				return c.currentBlock.NewSExt(arg, typ)
-			} else if uint64(i) == t.BitSize {
-				return arg
-			} else {
-				return c.currentBlock.NewTrunc(arg, typ)
+			default:
+				panic("TODO")
 			}
-		case *types.FloatType:
-			return c.currentBlock.NewFPToSI(arg, typ)
-
-		default:
-			panic("TODO")
+		} else if strings.HasPrefix(toTyp, "f") {
+			switch t := arg.Type().(type) {
+			case *types.IntType:
+				return c.currentBlock.NewSIToFP(arg, typ)
+			case *types.FloatType:
+				floatBit := getFloatBit(t)
+				if i > floatBit {
+					return c.currentBlock.NewFPExt(arg, typ)
+				} else if i == floatBit {
+					return arg
+				} else {
+					return c.currentBlock.NewFPTrunc(arg, typ)
+				}
+			default:
+				panic("TODO")
+			}
 		}
-	} else if strings.HasPrefix(toTyp, "f") {
-		switch t := arg.Type().(type) {
-		case *types.IntType:
-			return c.currentBlock.NewSIToFP(arg, typ)
-		case *types.FloatType:
-			floatBit := getFloatBit(t)
-			if i > floatBit {
-				return c.currentBlock.NewFPExt(arg, typ)
-			} else if i == floatBit {
-				return arg
-			} else {
-				return c.currentBlock.NewFPTrunc(arg, typ)
-			}
-		default:
-			panic("TODO")
+	} else {
+		if toTyp == "string" {
+			name := fmt.Sprintf("__%s_to_string__", paramType)
+			fun := c.funcs[name]
+			alloca := c.currentBlock.NewAlloca(c.types["string"])
+			c.currentBlock.NewCall(fun, alloca, arg)
+			return alloca
 		}
 	}
 
 	panic("not implemented yet")
-
 }
 
 func (c *Compiler) _callAppend(p0, p1 value.Value) value.Value {
@@ -798,6 +822,13 @@ func (c *Compiler) callAppend(expr *CallExpr) value.Value {
 	p0 := c.compileExpr(expr.Args[0])
 	p1 := c.compileExpr(expr.Args[1])
 	return c._callAppend(p0, p1)
+}
+
+func (c *Compiler) copy(arg value.Value) *ir.InstAlloca {
+	alloca := c.currentBlock.NewAlloca(arg.Type())
+	c.currentBlock.NewAlloca(arg.Type())
+	c.memcpyInternal(alloca, arg.(*ir.InstLoad).Src)
+	return alloca
 }
 
 func (c *Compiler) callPrint(expr *CallExpr, newline bool) value.Value {
@@ -837,9 +868,7 @@ func (c *Compiler) callPrint(expr *CallExpr, newline bool) value.Value {
 			}
 		case *types.StructType:
 			if t.Name() == "string" {
-				alloca := c.currentBlock.NewAlloca(arg.Type())
-				c.memcpyInternal(alloca, arg.(*ir.InstLoad).Src)
-				arg = alloca
+				arg := c.copy(arg)
 				val = c.currentBlock.NewCall(c.funcs["__print_str__"], arg)
 			} else {
 				panic("could not find func for unknown struct type")
@@ -928,17 +957,6 @@ func (c *Compiler) call(expr *CallExpr) value.Value {
 
 		for i, e := range expr.Args {
 			arg := c.compileExpr(e)
-			if funcName == "printf_internal" {
-				switch t := arg.Type().(type) {
-				case *types.FloatType:
-					if t.Kind != types.FloatKindDouble {
-						// think a way better
-						arg = b.NewFPExt(arg, types.Double)
-					}
-				}
-
-			}
-
 			idx := i
 			if returnVal != nil {
 				idx += 1
@@ -953,9 +971,7 @@ func (c *Compiler) call(expr *CallExpr) value.Value {
 
 					if _, ok := param.Attrs[0].(PassByValue); ok {
 						if _, ok := arg.Type().(*types.PointerType); !ok {
-							alloca := c.currentBlock.NewAlloca(arg.Type())
-							c.memcpyInternal(alloca, arg.(*ir.InstLoad).Src)
-							arg = alloca
+							arg = c.copy(arg)
 						}
 
 					}
@@ -972,7 +988,7 @@ func (c *Compiler) call(expr *CallExpr) value.Value {
 		}
 		return callRes
 	} else {
-		return c.primitiveCasting(funcName, expr)
+		return c.doCast(funcName, expr)
 	}
 }
 
@@ -1534,24 +1550,21 @@ func (c *Compiler) compileExpr(expr Expr) value.Value {
 
 				sourceBaseType := expr.ctx.sourceBaseType
 				if expr.ctx.isPointer {
-					data := c.call(&CallExpr{
-						Left: &IdentExpr{Name: "access_slice_datap"},
-						Args: []Expr{
-							expr.Left,
-							expr.Index,
-						},
-					})
+					l := c.compileExpr(expr.Left)
+					idx := c.castType("i64", c.compileExpr(expr.Index), "")
+					_, ok := idx.Type().(*types.IntType)
+					Assert(ok, "Index must be integer type")
+					data := c.currentBlock.NewCall(c.funcs["access_slice_datap"], c.copy(l), idx)
 					alloc := c.currentBlock.NewAlloca(types.NewPointer(c.types[sourceBaseType]))
 					c.currentBlock.NewStore(c.currentBlock.NewIntToPtr(data, types.NewPointer(c.types[sourceBaseType])), alloc)
 					return c.currentBlock.NewLoad(types.NewPointer(c.types[sourceBaseType]), alloc)
 				} else {
-					data := c.call(&CallExpr{
-						Left: &IdentExpr{Name: "access_slice_data"},
-						Args: []Expr{
-							expr.Left,
-							expr.Index,
-						},
-					})
+					l := c.compileExpr(expr.Left)
+					idx := c.castType("i64", c.compileExpr(expr.Index), "")
+					_, ok := idx.Type().(*types.IntType)
+					Assert(ok, "Index must be integer type")
+
+					data := c.currentBlock.NewCall(c.funcs["access_slice_data"], c.copy(l), idx)
 					itoptr := c.currentBlock.NewIntToPtr(data, types.NewPointer(c.types[sourceBaseType]))
 					return c.currentBlock.NewLoad(c.types[sourceBaseType], itoptr)
 				}

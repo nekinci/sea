@@ -220,9 +220,9 @@ func (c *Checker) addBuiltinTypes(names ...string) {
 		})
 
 		if name != "void" {
-			_ = c.addSymbol("cast_"+name, &FuncDef{
+			_ = c.addSymbol("to_"+name, &FuncDef{
 				DefNode:   nil,
-				Name:      "cast_" + name,
+				Name:      "to_" + name,
 				Type:      name,
 				Params:    []Param{},
 				MethodOf:  "",
@@ -1218,7 +1218,7 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 			return unresolvedType, fmt.Errorf("invalid access expression either left hand side must be array or map but got: %s", l)
 		}
 
-		if r != "i64" {
+		if r != "i64" && r != "i32" && r != "i16" && r != "i8" {
 			start, end := expr.Index.Pos()
 			c.errorf(start, end, "invalid index access expression, expected %s, got %s", "i64", r)
 			return unresolvedType, fmt.Errorf("invalid index access expression, expected %s, got %s", "i64", r)
@@ -1481,7 +1481,7 @@ func (c *Checker) checkTypeCast(expr *CallExpr, funcDef *FuncDef) (err error) {
 				c.errorf(start, end, "expected %s, got %s", "<number_type>", t)
 				err = fmt.Errorf("expected %s, got %s", "<number_type>", t)
 			}
-
+			c.ctx.(*CallCtx).typeCastParamType = t
 		}
 	}
 

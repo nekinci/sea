@@ -279,3 +279,52 @@ void __print__bool__(int b) {
         fputs("true", stdout);
     }
 }
+
+string __float_to_string__(float f) {
+    int len = snprintf(NULL, 0, "%f", f);
+    char *result = malloc(len + 1);
+    snprintf(result, len + 1, "%f", f);
+    return make_string(result);
+}
+
+string __double_to_string__(double d) {
+    int len = snprintf(NULL, 0, "%f", d);
+    char *result = malloc(len + 1);
+    snprintf(result, len + 1, "%f", d);
+    return make_string(result);
+}
+
+string __i8_to_string__(short s) {
+    int len = snprintf(NULL, 0, "%d", s);
+    char *result = malloc(len + 1);
+    snprintf(result, len + 1, "%d", s);
+    return make_string(result);
+}
+
+
+string __i32_to_string__(int s) {
+    int len = snprintf(NULL, 0, "%d", s);
+    char *result = malloc(len + 1);
+    snprintf(result, len + 1, "%d", s);
+    return make_string(result);
+}
+
+string __i16_to_string__(int s) {
+   return __i32_to_string__(s);
+}
+
+
+string __i64_to_string__(long l) {
+    int len = snprintf(NULL, 0, "%ld", l);
+    char *result = malloc(len + 1);
+    snprintf(result, len + 1, "%ld", l);
+    return make_string(result);
+}
+
+string __bool_to_string__(int i) {
+    if (i == 0) {
+        return make_string("false");
+    } else {
+        return make_string("true");
+    }
+}

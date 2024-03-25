@@ -53,9 +53,10 @@ func (v *VarAssignCtx) parentCtx() Ctx {
 }
 
 type CallCtx struct {
-	parent        Ctx
-	isCustomCall  bool
-	returnsStruct bool
+	parent            Ctx
+	isCustomCall      bool
+	returnsStruct     bool
+	typeCastParamType string
 }
 
 func (c *CallCtx) parentCtx() Ctx {

@@ -42,6 +42,9 @@ func main2() {
 	module.WriteTo(os.Stdout)
 }
 
+func len2() int64 {
+	return 5
+}
 func main() {
 	_ = os.Setenv("DEBUG", "")
 	Target = "arm64-apple-darwin23.1.0" // TODO

@@ -313,7 +313,7 @@ struct A {
 */
 
 # main function
-fun i32 main(i32 argc) {
+fun i32 main() {
      /* var string file = open_file_read("./example.json")
       var JsonParser* jsonParser = &JsonParser{
             file: file,
@@ -321,6 +321,10 @@ fun i32 main(i32 argc) {
             is_initialized: false,
             file_len: cast_i64(str_len(file))
       }*/
+
+  var i32 i = 4
+  var f64 f = to_f64(i)
+  println(f)
 
    return 0
 }
