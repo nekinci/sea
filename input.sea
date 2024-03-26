@@ -327,9 +327,6 @@ fun i32 main(i32 argc, string[] args) {
             file_len: cast_i64(str_len(file))
       }*/
 
-    println(GLOBAL_2)
-
-    println(args[0])
 
    return 0
 }

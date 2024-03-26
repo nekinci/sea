@@ -19,10 +19,12 @@ func (c *Checker) topologicalSort(stmts []*VarDefStmt) []*VarDefStmt {
 	i := 0
 	for !sortedVariables.Empty() {
 		name := sortedVariables.Pop()
-		stmt := c.GetVariable(name).(*VarDef).DefNode
-		stmt.Order = i
-		sortedList = append(sortedList, stmt)
-		i++
+		if c.GetVariable(name) != nil {
+			stmt := c.GetVariable(name).(*VarDef).DefNode
+			stmt.Order = i
+			sortedList = append(sortedList, stmt)
+			i++
+		}
 	}
 	return sortedList
 }
