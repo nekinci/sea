@@ -10,6 +10,10 @@ type Node interface {
 	Pos() (start Pos, end Pos)
 }
 
+type Constant interface {
+	IsConstant()
+}
+
 type Contexter interface {
 	setCtx(ctx Ctx)
 	GetCtx() Ctx
@@ -38,11 +42,15 @@ type NumberExpr struct {
 	ctx        Ctx
 }
 
+func (n *NumberExpr) IsConstant() {}
+
 type FloatExpr struct {
 	Value      float64
 	start, end Pos
 	ctx        Ctx
 }
+
+func (f *FloatExpr) IsConstant() {}
 
 func (f *FloatExpr) setCtx(ctx Ctx) {
 	f.ctx = ctx
@@ -102,6 +110,8 @@ type CharExpr struct {
 	start, end Pos
 }
 
+func (c *CharExpr) IsConstant() {}
+
 func (c *CharExpr) Pos() (Pos, Pos) {
 	return c.start, c.end
 }
@@ -122,6 +132,8 @@ type BoolExpr struct {
 	Value      bool // 1 true 0 false
 	start, end Pos
 }
+
+func (b *BoolExpr) IsConstant() {}
 
 func (b *BoolExpr) Pos() (Pos, Pos) { return b.start, b.end }
 
@@ -277,6 +289,8 @@ func (e *SelectorExpr) IsExpr() {}
 type NilExpr struct {
 	start, end Pos
 }
+
+func (n *NilExpr) IsConstant() {}
 
 type ArrayTypeExpr struct {
 	Type Expr
@@ -529,6 +543,7 @@ type VarDefStmt struct {
 	Type  Expr
 	Init  Expr
 	start Pos
+	Order int
 	ctx   *VarAssignCtx
 }
 

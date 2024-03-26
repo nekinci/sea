@@ -52,7 +52,6 @@ type Compiler struct {
 	currentBlock *ir.Block
 	currentFunc  *ir.Func
 	currentType  types.Type
-	currentAlloc *ir.InstAlloca
 
 	funcs         map[string]*ir.Func
 	types         map[string]types.Type
@@ -105,6 +104,14 @@ func (c *Compiler) compile() {
 
 	for _, stmt := range c.pkg.Stmts {
 		c.compileStmt(stmt)
+	}
+
+	if len(c.funcs["init"].Blocks) > 0 {
+		for _, block := range c.funcs["init"].Blocks {
+			if block.Term == nil {
+				block.NewRet(nil)
+			}
+		}
 	}
 
 }
@@ -300,6 +307,11 @@ func (c *Compiler) initBuiltinFuncs() {
 	c.funcs["__print_bool__"] = printBoolFn
 
 	c.addToStrFuncs("i8", "i16", "i32", "i64", "f16", "f32", "f64", "bool")
+
+	initFn := module.NewFunc("__init__", types.Void)
+	c.funcs["init"] = initFn
+	initFn.Visibility = enum.VisibilityHidden
+
 }
 
 func (c *Compiler) addToStrFuncs(names ...string) {
@@ -344,18 +356,46 @@ func (c *Compiler) isNull(r value.Value) bool {
 	_, ok := r.(*constant.Null)
 	return ok
 }
-func (c *Compiler) compileVarDef(stmt *VarDefStmt) {
-	Assert(c.currentScope != nil, "un-initialized scope")
-	Assert(c.currentBlock != nil, "currentBlock cannot be nil")
+
+func (c *Compiler) initGlobalVarDef(stmt *VarDefStmt) {
 	typ := c.resolveType(stmt.Type)
 	c.currentType = typ
-	ptr := c.currentBlock.NewAlloca(typ)
-	c.currentAlloc = ptr
-	c.Define(stmt.Name.Name, ptr)
+	global := c.module.NewGlobal(stmt.Name.Name, typ)
+
+	if _, ok := stmt.Init.(Constant); ok {
+		stmt.Context().isInitiated = true
+		global.Init = c.compileExpr(stmt.Init).(constant.Constant)
+	} else {
+		global.Init = c.getDefaultValue(typ)
+	}
+	c.Define(stmt.Name.Name, global)
+	initFn := c.funcs["init"]
+	if !stmt.ctx.isInitiated && len(initFn.Blocks) == 0 {
+		c.currentBlock = initFn.NewBlock(entryBlock)
+	}
+}
+
+func (c *Compiler) compileVarDef(stmt *VarDefStmt) {
+	Assert(c.currentScope != nil, "un-initialized scope")
+
+	var ptr value.Value
+	typ := c.resolveType(stmt.Type)
+	c.currentType = typ
+	if stmt.ctx.isGlobal {
+		c.initGlobalVarDef(stmt)
+		ptr = c.getAlloca(stmt.Name.Name)
+		if stmt.ctx.isInitiated {
+			return
+		}
+	} else {
+		ptr = c.currentBlock.NewAlloca(typ)
+		c.Define(stmt.Name.Name, ptr)
+	}
+
+	Assert(c.currentBlock != nil, "currentBlock cannot be nil")
 
 	if stmt.Init != nil {
 		right := c.compileExpr(stmt.Init)
-
 		if !c.isStorable(stmt.Context()) {
 			// do memcpy from returned alloca
 			switch r := right.(type) {
@@ -399,6 +439,10 @@ func (c *Compiler) compileFunc(def *FuncDefStmt, isMethod bool, thisType types.T
 		name = fmt.Sprintf("%s.%s", def.ImplOf.Type.(*IdentExpr).Name, name)
 	}
 
+	if name == "main" {
+		name = "__main__"
+	}
+
 	c.currentScope = &CompileScope{
 		variables: make(map[string]value.Value),
 		Parent:    c.currentScope,
@@ -408,7 +452,6 @@ func (c *Compiler) compileFunc(def *FuncDefStmt, isMethod bool, thisType types.T
 	typ := c.resolveType(def.Type)
 
 	params := make([]*ir.Param, 0)
-
 	if isMethod {
 		param := ir.NewParam("this", types.NewPointer(thisType))
 		params = append(params, param)
@@ -452,6 +495,7 @@ func (c *Compiler) compileFunc(def *FuncDefStmt, isMethod bool, thisType types.T
 		if !onlyDeclare {
 			block := f.NewBlock(entryBlock)
 			c.currentBlock = block
+			c.currentBlock.LocalID = 12
 
 			if def.Context().returnsStruct || def.Context().ExpectedType() == "string" {
 				var returnParam *ir.Param
@@ -717,6 +761,8 @@ func (c *Compiler) getAlloca(name string) value.Value {
 	v := c.Lookup(name)
 	switch v := v.(type) {
 	case *ir.InstAlloca:
+		return v
+	case *ir.Global:
 		return v
 	case *ir.Param:
 		return v
@@ -1460,6 +1506,8 @@ func (c *Compiler) compileExpr(expr Expr) value.Value {
 			alloca := c.currentBlock.NewAlloca(v.Typ)
 			c.currentBlock.NewStore(v, alloca)
 			return c.currentBlock.NewLoad(alloca.ElemType, alloca)
+		case *ir.Global:
+			return c.currentBlock.NewLoad(v.Typ.ElemType, v)
 		default:
 			panic("unreachable")
 		}

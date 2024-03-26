@@ -39,6 +39,8 @@ type VarAssignCtx struct {
 	isArray       bool
 	isSlice       bool
 	extractedType string
+	isGlobal      bool
+	isInitiated   bool
 
 	// compiler side fields
 	alloca *ir.InstAlloca

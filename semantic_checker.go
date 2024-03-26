@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -70,9 +71,10 @@ func (t *TypeDef) Pos() (Pos, Pos) {
 }
 
 type VarDef struct {
-	DefNode *VarDefStmt
-	Name    string
-	Type    string
+	DefNode  *VarDefStmt
+	Name     string
+	Type     string
+	IsGlobal bool
 }
 
 func (v *VarDef) IsSymbol()       {}
@@ -197,6 +199,34 @@ func (c *Checker) Check() ([]Error, bool) {
 	defer c.CloseScope()
 	c.initGlobalScope()
 	c.collectSignatures()
+	stmts := make([]*VarDefStmt, 0)
+	for _, stmt := range c.Package.Stmts {
+		switch stmt := stmt.(type) {
+		case *VarDefStmt:
+			stmts = append(stmts, stmt)
+		}
+	}
+
+	if !c.checkInitializationCycle(stmts) {
+		c.topologicalSort(stmts)
+	}
+
+	sort.SliceStable(c.Package.Stmts, func(i, j int) bool {
+		a, b := c.Package.Stmts[i], c.Package.Stmts[j]
+		aa, ok := a.(*VarDefStmt)
+		bb, ok2 := b.(*VarDefStmt)
+
+		if ok && ok2 {
+			return aa.Order < bb.Order
+		}
+
+		if ok || ok2 {
+			return true
+		}
+
+		return false
+
+	})
 	c.check()
 	return c.Errors, len(c.Errors) > 0
 }
@@ -656,12 +686,18 @@ func (c *Checker) fixVarDefStmt(stmt *VarDefStmt, l, r string, ctx *VarAssignCtx
 		}
 	}
 }
-
-func (c *Checker) checkVarDef(stmt *VarDefStmt) {
+func (c *Checker) checkVarDef(stmt *VarDefStmt, isGlobal bool) {
 	variable := c.GetVariable(stmt.Name.Name)
-	if variable != nil {
+	if variable != nil && !isGlobal {
 		start, end := stmt.Name.Pos()
 		c.errorf(start, end, "redeclared symbol %s", stmt.Name.Name)
+	}
+
+	if isGlobal {
+		if !variable.IsVarDef() {
+			start, end := stmt.Name.Pos()
+			c.errorf(start, end, "already declared as non variable: %s", stmt.Name.Name)
+		}
 	}
 
 	typName := c.getNameOfType(stmt.Type)
@@ -671,6 +707,7 @@ func (c *Checker) checkVarDef(stmt *VarDefStmt) {
 		parent:       c.ctx,
 		expectedType: typName,
 		isSlice:      c.isSlice(typName),
+		isGlobal:     isGlobal,
 	}
 
 	c.newCtx(ctx)
@@ -700,8 +737,11 @@ func (c *Checker) checkVarDef(stmt *VarDefStmt) {
 		}
 
 	}
+	variable.(*VarDef).IsGlobal = isGlobal
 
-	c.DefineVar(stmt.Name.Name, typName)
+	if !isGlobal {
+		c.DefineVar(stmt.Name.Name, typName)
+	}
 }
 
 func (c *Checker) setVarAssignCtxFields(ctx *VarAssignCtx, typName string, typSym *TypeDef) {
@@ -825,7 +865,7 @@ func (c *Checker) checkStmt(stmt Stmt) {
 	case *BlockStmt:
 		c.checkBlockStmt(stmt)
 	case *VarDefStmt:
-		c.checkVarDef(stmt)
+		c.checkVarDef(stmt, false)
 	case *ImplStmt:
 		c.checkImplStmt(stmt)
 	case *ExprStmt:
@@ -1498,6 +1538,7 @@ func (c *Checker) checkBlockStmt(stmt *BlockStmt) {
 }
 
 func (c *Checker) check() {
+
 	for _, stmt := range c.Package.Stmts {
 		switch stmt := stmt.(type) {
 		case *ImplStmt:
@@ -1505,7 +1546,7 @@ func (c *Checker) check() {
 		case *StructDefStmt:
 			c.checkStructDef(stmt)
 		case *VarDefStmt:
-			c.checkVarDef(stmt)
+			c.checkVarDef(stmt, true)
 		case *FuncDefStmt:
 			c.checkFuncDef(stmt)
 		}

@@ -1,4 +1,4 @@
-package p
+package main
 
 extern fun string open_file_read(string path)
 extern fun i32 str_len(string str)
@@ -312,8 +312,13 @@ struct A {
 
 */
 
+var i32 GLOBAL_4 = GLOBAL_1
+var i32 GLOBAL_1 = GLOBAL_2 + GLOBAL_3
+var i32 GLOBAL_2 = 1
+var i32 GLOBAL_3 = 66
+
 # main function
-fun i32 main() {
+fun i32 main(i32 argc, string[] args) {
      /* var string file = open_file_read("./example.json")
       var JsonParser* jsonParser = &JsonParser{
             file: file,
@@ -322,9 +327,9 @@ fun i32 main() {
             file_len: cast_i64(str_len(file))
       }*/
 
-  var i32 i = 4
-  var f64 f = to_f64(i)
-  println(f)
+    println(GLOBAL_2)
+
+    println(args[0])
 
    return 0
 }

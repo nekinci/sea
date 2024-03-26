@@ -328,3 +328,27 @@ string __bool_to_string__(int i) {
         return make_string("true");
     }
 }
+
+
+slice __get_argv_slice__(int argc, char** argv) {
+    slice* s = malloc(sizeof(slice));
+    *s = make_slice();
+    for (int i = 0; i < argc; i++) {
+        string arg = make_string(argv[i]);
+        append_slice_data(s, (char*)&arg);
+    }
+    return *s;
+}
+
+// __init__()
+extern void __init__();
+void init() {
+    __init__();
+}
+
+// __main()__
+extern int __main__(int argc, slice argv);
+int main(int argc, char** argv) {
+    __init__();
+    return __main__(argc, __get_argv_slice__(argc, argv));
+}
