@@ -4,7 +4,7 @@ Sea, pronounced as `C` is a programming language that compiles to LLVM Backend. 
 
 Note that: Only tested on arm64_macos. In other architectures or OS may happens unexpected behaviours.
 
-Here is example codes written in sea, until I write documentation the code will help, I hope.
+Here are example codes written in sea, until I write documentation the code will help, I hope.
 
 ### Hello world Application
 ```kotlin
