@@ -102,6 +102,26 @@ func (p *Parser) parseTypeIdentExpr() Expr {
 	return expr
 }
 
+func (p *Parser) parseConst() *VarDefStmt {
+	p.expect(TokConst)
+	var start = p.startOfLastExpected()
+	typExpr := p.parseTypeIdentExpr()
+
+	nameExpr := p.parseIdentExpr()
+	constDefStmt := &VarDefStmt{
+		Name:    nameExpr,
+		Type:    typExpr,
+		Init:    nil,
+		start:   start,
+		IsConst: true,
+	}
+
+	p.expect(TokAssign)
+	expr := p.parseExpr()
+	constDefStmt.Init = p.parseObjLiteral(expr)
+	return constDefStmt
+}
+
 func (p *Parser) parseVar() *VarDefStmt {
 	p.expect(TokVar)
 	var start = p.startOfLastExpected()
@@ -240,6 +260,8 @@ func (p *Parser) parseStmt() Stmt {
 		return p.parseFor()
 	case TokVar:
 		return p.parseVar()
+	case TokConst:
+		return p.parseConst()
 	case TokIncr, TokDecr:
 		return p.parseIncDecrStmt(nil)
 	default:
@@ -309,6 +331,8 @@ func (p *Parser) parseTopStmt() Stmt {
 		return p.parseStruct()
 	case TokImpl:
 		return p.parseImpl()
+	case TokConst:
+		return p.parseConst()
 	default:
 		p.expectAnyOf(TokFun, TokExtern, TokVar, TokStruct, TokImpl)
 		return nil

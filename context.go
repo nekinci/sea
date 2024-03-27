@@ -41,6 +41,7 @@ type VarAssignCtx struct {
 	extractedType string
 	isGlobal      bool
 	isInitiated   bool
+	isConstant    bool
 
 	// compiler side fields
 	alloca *ir.InstAlloca

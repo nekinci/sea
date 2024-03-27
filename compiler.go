@@ -106,11 +106,13 @@ func (c *Compiler) compile() {
 		c.compileStmt(stmt)
 	}
 
-	if len(c.funcs["init"].Blocks) > 0 {
-		for _, block := range c.funcs["init"].Blocks {
-			if block.Term == nil {
-				block.NewRet(nil)
-			}
+	if len(c.funcs["init"].Blocks) == 0 {
+		c.funcs["init"].NewBlock(entryBlock)
+	}
+
+	for _, block := range c.funcs["init"].Blocks {
+		if block.Term == nil {
+			block.NewRet(nil)
 		}
 	}
 
@@ -361,8 +363,8 @@ func (c *Compiler) initGlobalVarDef(stmt *VarDefStmt) {
 	typ := c.resolveType(stmt.Type)
 	c.currentType = typ
 	global := c.module.NewGlobal(stmt.Name.Name, typ)
-
-	if _, ok := stmt.Init.(Constant); ok {
+	_, ok := stmt.Init.(Constant)
+	if ok && stmt.Context().expectedType != "string" {
 		stmt.Context().isInitiated = true
 		global.Init = c.compileExpr(stmt.Init).(constant.Constant)
 	} else {

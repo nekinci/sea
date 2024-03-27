@@ -11,7 +11,7 @@ type Node interface {
 }
 
 type Constant interface {
-	IsConstant()
+	IsConstant() bool
 }
 
 type Contexter interface {
@@ -42,7 +42,7 @@ type NumberExpr struct {
 	ctx        Ctx
 }
 
-func (n *NumberExpr) IsConstant() {}
+func (n *NumberExpr) IsConstant() bool { return true }
 
 type FloatExpr struct {
 	Value      float64
@@ -50,7 +50,7 @@ type FloatExpr struct {
 	ctx        Ctx
 }
 
-func (f *FloatExpr) IsConstant() {}
+func (f *FloatExpr) IsConstant() bool { return true }
 
 func (f *FloatExpr) setCtx(ctx Ctx) {
 	f.ctx = ctx
@@ -90,6 +90,8 @@ type StringExpr struct {
 	ctx        Ctx
 }
 
+func (s *StringExpr) IsConstant() bool { return true }
+
 func (s *StringExpr) setCtx(ctx Ctx) {
 	s.ctx = ctx
 }
@@ -110,7 +112,7 @@ type CharExpr struct {
 	start, end Pos
 }
 
-func (c *CharExpr) IsConstant() {}
+func (c *CharExpr) IsConstant() bool { return true }
 
 func (c *CharExpr) Pos() (Pos, Pos) {
 	return c.start, c.end
@@ -133,7 +135,7 @@ type BoolExpr struct {
 	start, end Pos
 }
 
-func (b *BoolExpr) IsConstant() {}
+func (b *BoolExpr) IsConstant() bool { return true }
 
 func (b *BoolExpr) Pos() (Pos, Pos) { return b.start, b.end }
 
@@ -143,6 +145,16 @@ type UnaryExpr struct {
 	Op    Operation
 	Right Expr
 	start Pos
+}
+
+func (u *UnaryExpr) IsConstant() bool {
+	r, ok := u.Right.(Constant)
+
+	if ok {
+		return r.IsConstant()
+	}
+
+	return false
 }
 
 func (u *UnaryExpr) Pos() (Pos, Pos) {
@@ -186,6 +198,17 @@ type BinaryExpr struct {
 	Right Expr
 	Op    Operation
 	Ctx   *BinaryExprCtx
+}
+
+func (b *BinaryExpr) IsConstant() bool {
+
+	l, ok1 := b.Left.(Constant)
+	r, ok2 := b.Right.(Constant)
+	if ok1 && ok2 {
+		return l.IsConstant() && r.IsConstant()
+	}
+
+	return false
 }
 
 func (e *BinaryExpr) Pos() (Pos, Pos) {
@@ -289,8 +312,6 @@ func (e *SelectorExpr) IsExpr() {}
 type NilExpr struct {
 	start, end Pos
 }
-
-func (n *NilExpr) IsConstant() {}
 
 type ArrayTypeExpr struct {
 	Type Expr
@@ -539,12 +560,13 @@ func (c *ContinueStmt) Pos() (Pos, Pos) {
 func (c *ContinueStmt) IsStmt() {}
 
 type VarDefStmt struct {
-	Name  *IdentExpr
-	Type  Expr
-	Init  Expr
-	start Pos
-	Order int
-	ctx   *VarAssignCtx
+	Name    *IdentExpr
+	Type    Expr
+	Init    Expr
+	start   Pos
+	Order   int
+	IsConst bool
+	ctx     *VarAssignCtx
 }
 
 func (v *VarDefStmt) setCtx(ctx Ctx) {

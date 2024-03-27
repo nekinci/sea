@@ -78,4 +78,5 @@ const (
 	TokChar           Token = "<char_literal>"
 	TokPackage        Token = "package"
 	TokNew            Token = "new"
+	TokConst          Token = "const"
 )

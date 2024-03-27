@@ -75,6 +75,7 @@ type VarDef struct {
 	Name     string
 	Type     string
 	IsGlobal bool
+	IsConst  bool
 }
 
 func (v *VarDef) IsSymbol()       {}
@@ -708,6 +709,7 @@ func (c *Checker) checkVarDef(stmt *VarDefStmt, isGlobal bool) {
 		expectedType: typName,
 		isSlice:      c.isSlice(typName),
 		isGlobal:     isGlobal,
+		isConstant:   stmt.IsConst,
 	}
 
 	c.newCtx(ctx)
@@ -719,7 +721,20 @@ func (c *Checker) checkVarDef(stmt *VarDefStmt, isGlobal bool) {
 		c.errorf(start, end, "type %s is not defined", typName)
 	}
 
+	if stmt.Init == nil && stmt.IsConst {
+		start, end := stmt.Pos()
+		c.errorf(start, end, "constants must have initializer")
+	}
+
 	if stmt.Init != nil {
+
+		if stmt.IsConst {
+			expr, isConstExpr := stmt.Init.(Constant)
+			if !isConstExpr || !expr.IsConstant() {
+				start, end := stmt.Init.Pos()
+				c.errorf(start, end, "expected const initializer")
+			}
+		}
 
 		r, err := c.checkExpr(stmt.Init)
 		if err != nil {
@@ -737,10 +752,13 @@ func (c *Checker) checkVarDef(stmt *VarDefStmt, isGlobal bool) {
 		}
 
 	}
-	variable.(*VarDef).IsGlobal = isGlobal
+	if variable != nil {
+		variable.(*VarDef).IsGlobal = isGlobal
+	}
 
 	if !isGlobal {
 		c.DefineVar(stmt.Name.Name, typName)
+		c.GetVariable(stmt.Name.Name).(*VarDef).IsConst = stmt.IsConst
 	}
 }
 
@@ -1360,6 +1378,7 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 			panic("unreachable")
 		}
 	case *AssignExpr:
+		c.checkConstAssign(expr)
 		l, err := c.checkExpr(expr.Left)
 
 		if err != nil {
@@ -1505,6 +1524,23 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 
 }
 
+func (c *Checker) checkConstAssign(expr *AssignExpr) {
+	if ident, ok := expr.Left.(*IdentExpr); ok {
+		v := c.LookupSym(ident.Name)
+		if v != nil {
+			if v.IsVarDef() {
+				if v.(*VarDef).IsConst {
+					start, end := ident.Pos()
+					c.errorf(start, end, "const variables cannot be changed")
+				}
+			} else {
+				start, end := expr.Pos()
+				c.errorf(start, end, "expected identifier for assign expr")
+			}
+		}
+	}
+}
+
 func (c *Checker) checkTypeCast(expr *CallExpr, funcDef *FuncDef) (err error) {
 	if len(expr.Args) != 1 {
 		start, end := expr.Pos()
@@ -1621,6 +1657,7 @@ func (c *Checker) collectSignatures() {
 				DefNode: stmt,
 				Name:    stmt.Name.Name,
 				Type:    c.getNameOfType(stmt.Type),
+				IsConst: stmt.IsConst,
 			}
 		case *FuncDefStmt:
 			c.collectFuncSignature(stmt, "")
