@@ -184,8 +184,8 @@ func devMode() {
 }
 
 func main() {
-	devMode()
-	// parseCommandLineArgs()
+	//	devMode()
+	parseCommandLineArgs()
 }
 
 // TODO change it

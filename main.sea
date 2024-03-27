@@ -1,0 +1,8 @@
+package main
+
+fun i32 main() {
+    println("This is the " + " string concatenation")
+    return 0
+}
+
+
