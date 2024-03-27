@@ -3,7 +3,17 @@
 Sea, pronounced as `C` is a programming language that compiles to LLVM Backend. As a hobby project, it has served as a valuable teacher, providing significant insights into various aspects of computer science. It is early and unstable version and currently ongoing process.
 
 
-Here is an example code written in sea, until I write documentation the code will help, I hope.
+Here is example codes written in sea, until I write documentation the code will help, I hope.
+
+### Hello world Application
+```kotlin
+   package main
+   
+   fun i32 main() {
+        println("Hello, world!")
+        return 0
+   } 
+```
 
 ### Simple Json Parser as an example
 ```kotlin
