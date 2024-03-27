@@ -6,8 +6,8 @@ Sea, pronounced as `C` is a programming language that compiles to LLVM Backend. 
 Here is an example code written in sea, until I write documentation the code will help, I hope.
 
 ### Simple Json Parser as an example
-```sea
-   package main
+```kotlin
+package main
 
 extern fun string open_file_read(string path)
 extern fun i32 str_len(string str)
