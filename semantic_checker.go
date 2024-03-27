@@ -1167,9 +1167,9 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 				start, end := kv.Pos()
 				c.errorf(start, end, "type mismatch (%s:%s)", l, r)
 			} else {
-				if ctxter, ok := kv.Value.(Contexter); ok {
+				/*if ctxter, ok := kv.Value.(Contexter); ok {
 					ctxter.setCtx(ctx)
-				}
+				}*/
 				kv.setCtx(ctx)
 				c.setVarAssignCtxFields(ctx, l, c.LookupSym(c.extractBaseType(l)).(*TypeDef))
 			}
