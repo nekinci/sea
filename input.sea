@@ -316,7 +316,6 @@ var i32 GLOBAL_4 = GLOBAL_1
 var i32 GLOBAL_1 = GLOBAL_2 + GLOBAL_3
 var i32 GLOBAL_2 = 1
 var i32 GLOBAL_3 = 66
-
 # main function
 fun i32 main(i32 argc, string[] args) {
      /* var string file = open_file_read("./example.json")
@@ -327,6 +326,6 @@ fun i32 main(i32 argc, string[] args) {
             file_len: cast_i64(str_len(file))
       }*/
 
-
+   println("Hello, world!")
    return 0
 }

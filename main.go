@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path"
 	"strings"
 )
 
@@ -26,6 +27,20 @@ func AssertErr(err error) {
 	}
 }
 
+func ExitPrintf(format string, args ...any) {
+	if len(args) > 0 {
+		fmt.Printf(format, args)
+	} else {
+		fmt.Print(format)
+	}
+	os.Exit(0)
+}
+
+func FatalPrintf(format string, args ...any) {
+	fmt.Printf(format, args)
+	os.Exit(1)
+}
+
 func main2() {
 	module := ir.NewModule()
 	newStruct := types.NewStruct(types.I32, types.I32)
@@ -42,26 +57,45 @@ func main2() {
 	module.WriteTo(os.Stdout)
 }
 
-func len2() int64 {
-	return 5
-}
-func main() {
-	_ = os.Setenv("DEBUG", "")
-	Target = "arm64-apple-darwin23.1.0" // TODO
-	compiler := &Compiler{}
-	// read compileExpr from file
-	file, err := os.ReadFile("./input.sea")
-	parser := NewParser("./input.sea")
-	//parser.printTokens()
+func Parse(path string) *Package {
+	parser := NewParser(path)
 	pckg, errors := parser.parse()
-	if errors != nil && len(errors) > 0 {
+	if len(errors) > 0 {
 		for _, err := range errors {
 			fmt.Print(err)
 		}
-		return
+		ExitPrintf("")
 	}
 
-	var checker *Checker = &Checker{
+	return pckg
+}
+
+func Compile(p *string, pckg *Package) string {
+	outputPath := path.Join(os.TempDir(), "plus.ll")
+	if p != nil {
+		outputPath = *p
+	}
+
+	newFile, err := os.Create(outputPath)
+	if err != nil {
+		panic(err)
+	}
+
+	compiler := Compiler{}
+	compiler.module = ir.NewModule()
+	compiler.init()
+	compiler.pkg = pckg
+	compiler.compile()
+	_, err = compiler.module.WriteTo(newFile)
+	if err != nil {
+		panic(err)
+	}
+
+	return outputPath
+}
+
+func Check(pckg *Package) {
+	var checker = &Checker{
 		Package: pckg,
 		Errors:  make([]Error, 0),
 	}
@@ -71,34 +105,95 @@ func main() {
 		for _, err := range errors {
 			fmt.Print(err)
 		}
-		return
+		ExitPrintf("")
 	}
-
-	_ = file
-	if err != nil {
-		log.Fatalf("failed to read file: %v", err)
-	}
-
-	outputPath := "./plus.ll"
-	newFile, err := os.Create(outputPath)
-	if err != nil {
-		panic(err)
-	}
-
-	compiler.module = ir.NewModule()
-	compiler.init()
-	compiler.pkg = pckg
-	compiler.compile()
-	_, err = compiler.module.WriteTo(newFile)
-	if err != nil {
-		panic(err)
-	}
-	clangCompile(outputPath, "./runtime/runtime.c", true, true)
 }
 
-func clangCompile(path, runtimePath string, runBinary bool, outputForwarding bool) {
+func parseCommandLineArgs() {
+	Target = "arm64-apple-darwin23.1.0" // TODO
 
-	var outputPath = path[:strings.LastIndex(path, ".")] + ".o"
+	argsLen := len(os.Args)
+
+	if argsLen < 2 || (argsLen == 2 && (os.Args[1] != "help" && os.Args[1] != "version")) {
+		if argsLen < 3 {
+			//binary arg, command, <file_name>
+			fmt.Printf("Invalid command: %s\nExample usage: sealang run <filename>", strings.Join(os.Args, " "))
+			os.Exit(1)
+		}
+	}
+
+	command := os.Args[1]
+
+	if command == "version" {
+		ExitPrintf("sealang version 0.0.1\n")
+	} else if command == "help" {
+		fmt.Fprintf(os.Stdout, `SEALANG v0.0.1
+sea is a toy programming language in C family pronounced as C :)
+DISCLAIMER: This is the early unstable version
+commands:
+	help: help prints useful command tips
+	build: build compiles input and runtime files and extracts executable binary in current directory or given output parameter path
+	USAGE:
+		sealang build <file_name>
+		sealang build <file_name> -o <output_path>
+	run: run builds the input file and runs executable binary
+	USAGE:
+		sealang run <file_name>
+	check: check checks syntax and semantic errors for given file
+	USAGE:
+		sealang check <file_name>
+`)
+	} else if command == "run" {
+		pckg := Parse(os.Args[2])
+		Check(pckg)
+		output := Compile(nil, pckg)
+		compile(output, "./runtime/runtime.c", true, true, "")
+	} else if command == "check" {
+		pckg := Parse(os.Args[2])
+		Check(pckg)
+	} else if command == "build" {
+		outputPath := ""
+		if argsLen > 3 {
+			argv3 := os.Args[3]
+			if argv3 != "-o" {
+				ExitPrintf("invalid parameter: %s\nExample usage: ... -o output_path ", argv3)
+			}
+			if argsLen != 5 {
+				ExitPrintf("invalid parameters: %s\n", "")
+			}
+			outputPath = os.Args[4]
+		}
+		pckg := Parse(os.Args[2])
+		Check(pckg)
+		output := Compile(nil, pckg)
+		compile(output, "./runtime/runtime.c", false, false, outputPath)
+
+	}
+
+}
+
+func devMode() {
+	Target = "arm64-apple-darwin23.1.0" // TODO
+	_ = os.Setenv("DEBUG", "")
+	// read compileExpr from file
+	pckg := Parse("./input.sea")
+	Check(pckg)
+	outputLL := "./input.ll"
+	output := Compile(&outputLL, pckg)
+	compile(output, "./runtime/runtime.c", true, true, "")
+}
+
+func main() {
+	devMode()
+	// parseCommandLineArgs()
+}
+
+// TODO change it
+func compile(path, runtimePath string, runBinary bool, outputForwarding bool, outputPath string) {
+
+	if outputPath == "" {
+		outputPath = path[:strings.LastIndex(path, ".")] + ""
+	}
 
 	// clang ${path} -o ${path}.o
 
@@ -113,7 +208,6 @@ func clangCompile(path, runtimePath string, runBinary bool, outputForwarding boo
 	}
 
 	command := exec.Command("clang", path, runtimeOutputPath, "-o", outputPath)
-	fmt.Printf("RUN CMD: %s\n", command.String())
 	if outputForwarding {
 		command.Stdout = os.Stdout
 		command.Stderr = os.Stdout
