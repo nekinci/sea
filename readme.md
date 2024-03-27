@@ -1,6 +1,6 @@
-## sea - a toy programming language
+## 🎉 sea - programming language 🚀
 
-Sea, pronounced as "C" is a programming language that compiles to LLVM code. As a hobby project, it has served as a valuable teacher, providing significant insights into various aspects of computer science. It is currently ongoing process.
+Sea, pronounced as `C` is a programming language that compiles to LLVM Backend. As a hobby project, it has served as a valuable teacher, providing significant insights into various aspects of computer science. It is early and unstable version and currently ongoing process.
 
 
 Here is an example code written in sea, until I write documentation the code will help, I hope.
@@ -336,6 +336,13 @@ fun i32 main(i32 argc, string[] args) {
 }
 
 ```
+
+#### Commands:
+
+`sea
+    sealang run <file_name>`
+
+`sealang build <file_name> -o <output_path>`
 
 
 ### Known Bugs
