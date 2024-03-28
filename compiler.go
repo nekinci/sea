@@ -87,6 +87,12 @@ func (c *Compiler) compile() {
 
 	for _, stmt := range c.pkg.Stmts {
 		switch stmt := stmt.(type) {
+		case *VarDefStmt:
+			c.compileVarDef(stmt)
+		}
+	}
+	for _, stmt := range c.pkg.Stmts {
+		switch stmt := stmt.(type) {
 		case *FuncDefStmt:
 			c.compileFunc(stmt, false, nil, true)
 		case *ImplStmt:
@@ -103,7 +109,11 @@ func (c *Compiler) compile() {
 	}
 
 	for _, stmt := range c.pkg.Stmts {
-		c.compileStmt(stmt)
+		switch stmt := stmt.(type) {
+		case *VarDefStmt:
+		default:
+			c.compileStmt(stmt)
+		}
 	}
 
 	if len(c.funcs["init"].Blocks) == 0 {
@@ -363,13 +373,7 @@ func (c *Compiler) initGlobalVarDef(stmt *VarDefStmt) {
 	typ := c.resolveType(stmt.Type)
 	c.currentType = typ
 	global := c.module.NewGlobal(stmt.Name.Name, typ)
-	_, ok := stmt.Init.(Constant)
-	if ok && stmt.Context().expectedType != "string" {
-		stmt.Context().isInitiated = true
-		global.Init = c.compileExpr(stmt.Init).(constant.Constant)
-	} else {
-		global.Init = c.getDefaultValue(typ)
-	}
+	global.Init = c.getDefaultValue(typ)
 	c.Define(stmt.Name.Name, global)
 	initFn := c.funcs["init"]
 	if !stmt.ctx.isInitiated && len(initFn.Blocks) == 0 {

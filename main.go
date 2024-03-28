@@ -132,7 +132,7 @@ sea is a toy programming language in C family pronounced as C :)
 DISCLAIMER: This is the early unstable version
 commands:
 	help: help prints useful command tips
-	build: build compiles input and runtime files and extracts executable binary in current directory or given output parameter path
+	build: build compiles input and runtime files and extracts executable binary to current directory or given output parameter path
 	USAGE:
 		sealang build <file_name>
 		sealang build <file_name> -o <output_path>
