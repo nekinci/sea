@@ -61,6 +61,10 @@ type Compiler struct {
 	sequence      int
 }
 
+func (c *Compiler) PackageName() string {
+	return c.pkg.Name
+}
+
 func (c *Compiler) GetSequence() string {
 	c.sequence += 1
 	return fmt.Sprintf("%d", c.sequence)
@@ -372,7 +376,8 @@ func (c *Compiler) isNull(r value.Value) bool {
 func (c *Compiler) initGlobalVarDef(stmt *VarDefStmt) {
 	typ := c.resolveType(stmt.Type)
 	c.currentType = typ
-	global := c.module.NewGlobal(stmt.Name.Name, typ)
+	name := c.PackageName() + "." + stmt.Name.Name
+	global := c.module.NewGlobal(name, typ)
 	global.Init = c.getDefaultValue(typ)
 	c.Define(stmt.Name.Name, global)
 	initFn := c.funcs["init"]
@@ -445,8 +450,12 @@ func (c *Compiler) compileFunc(def *FuncDefStmt, isMethod bool, thisType types.T
 		name = fmt.Sprintf("%s.%s", def.ImplOf.Type.(*IdentExpr).Name, name)
 	}
 
+	var llvmName = name
 	if name == "main" {
 		name = "__main__"
+		llvmName = "__main__"
+	} else {
+		llvmName = c.PackageName() + "." + name
 	}
 
 	c.currentScope = &CompileScope{
@@ -491,7 +500,7 @@ func (c *Compiler) compileFunc(def *FuncDefStmt, isMethod bool, thisType types.T
 	}
 	var f *ir.Func
 	if onlyDeclare {
-		f = c.module.NewFunc(name, typ, params...)
+		f = c.module.NewFunc(llvmName, typ, params...)
 		c.funcs[name] = f
 	} else {
 		f = c.funcs[name]
@@ -537,12 +546,12 @@ func (c *Compiler) compileStructDef(def *StructDefStmt) {
 	}
 
 	str := types.NewStruct()
-	td := c.module.NewTypeDef(def.Name.Name, str)
+	td := c.module.NewTypeDef(c.PackageName()+"."+def.Name.Name, str)
 	c.types[def.Name.Name] = td
 	for i, field := range def.Fields {
 		typ := c.resolveType(field.Type)
 		str.Fields = append(str.Fields, typ)
-		c.typesIndexMap[fieldIndexKey{field.Name.Name, def.Name.Name}] = i
+		c.typesIndexMap[fieldIndexKey{field.Name.Name, c.PackageName() + "." + def.Name.Name}] = i
 	}
 }
 
@@ -1058,7 +1067,7 @@ func (c *Compiler) callSizeOf(t types.Type) value.Value {
 
 		var f *ir.Func
 		if _, ok := c.funcs["GetSizeOf_"+t.Name()]; !ok {
-			f = c.module.NewFunc("GetSizeOf_"+t.Name(), types.I64)
+			f = c.module.NewFunc(c.PackageName()+".GetSizeOf_"+t.Name(), types.I64)
 			block := f.NewBlock(entryBlock)
 			alloca := block.NewAlloca(t)
 			endPtr := block.NewGetElementPtr(t, alloca, constant.NewInt(types.I32, 1))
