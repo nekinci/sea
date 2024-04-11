@@ -1,0 +1,12 @@
+package main
+
+use "strings" as strings2
+
+fun i32 main() {
+    var strings2.StrBuilder* strBuilder = &strings2.StrBuilder{s:"dddd"}
+    strBuilder.s = "x"
+    println(strBuilder.s)
+    return 0
+}
+
+

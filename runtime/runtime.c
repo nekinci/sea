@@ -320,7 +320,6 @@ string __i64_to_string__(long l) {
     snprintf(result, len + 1, "%ld", l);
     return make_string(result);
 }
-
 string __bool_to_string__(int i) {
     if (i == 0) {
         return make_string("false");
@@ -341,14 +340,14 @@ slice __get_argv_slice__(int argc, char** argv) {
 }
 
 // __init__()
-extern void __init__();
+extern void __main____init__();
 void init() {
-    __init__();
+    __main____init__();
 }
 
 // __main()__
 extern int __main__(int argc, slice argv);
 int main(int argc, char** argv) {
-    __init__();
+    __main____init__();
     return __main__(argc, __get_argv_slice__(argc, argv));
 }

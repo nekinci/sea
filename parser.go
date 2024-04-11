@@ -2,8 +2,6 @@ package main
 
 import (
 	"fmt"
-	"log"
-	"os"
 	"slices"
 	"strconv"
 )
@@ -28,7 +26,7 @@ func (e Error) String() string {
 
 type Parser struct {
 	*Lexer
-	module     *Package
+	file       *File
 	errors     []Error
 	start, end Pos // indicates the start and end positions of the last expected token
 }
@@ -51,17 +49,12 @@ func (p *Parser) endOfLastExpected() Pos {
 	return p.end
 }
 
-func NewParser(path string) *Parser {
+func NewParser(path, file string) *Parser {
 	parser := &Parser{}
 	Assert(path != "", "path cannot be empty")
-	file, err := os.ReadFile(path)
-	if err != nil {
-		log.Fatalf("failed to read file: %v", err)
-	}
-
 	lexer := &Lexer{
 		filename: path,
-		input:    string(file),
+		input:    file,
 		pos:      0,
 		inputLen: len(file),
 	}
@@ -70,22 +63,21 @@ func NewParser(path string) *Parser {
 	return parser
 }
 
-func (p *Parser) parse() (*Package, []Error) {
-	pckg := &Package{
-		Name:  "Main",
+func (p *Parser) parse() (*File, []Error) {
+	file := &File{
+		Name:  p.filename,
 		Stmts: []Stmt{},
 	}
-	p.module = pckg
+	p.file = file
 
 	p.next()
 	stmt := p.parsePackageStmt()
-	pckg.PackageStmt = stmt
-	pckg.Name = stmt.Name.Name
+	file.PackageStmt = stmt
 	for p.curTok != EOF {
-		pckg.Stmts = append(pckg.Stmts, p.parseTopStmt())
+		file.Stmts = append(file.Stmts, p.parseTopStmt())
 	}
 
-	return pckg, p.errors
+	return file, p.errors
 
 }
 
@@ -140,6 +132,8 @@ func (p *Parser) parseVar() *VarDefStmt {
 		p.expect(TokAssign)
 		expr := p.parseExpr()
 		varDefStmt.Init = p.parseObjLiteral(expr)
+	} else {
+		p.errorf(varDefStmt.start.Line != p.Start().Line, fmt.Sprintf("Expected newline"))
 	}
 	return varDefStmt
 }
@@ -323,6 +317,19 @@ func (p *Parser) parseTopStmt() Stmt {
 		}
 		p.expectAnyOf(TokFun, TokVar)
 		return nil
+	case TokUse:
+		p.expect(TokUse)
+		start := p.startOfLastExpected()
+		stmt := &UseStmt{
+			start: start,
+		}
+		stmt.Path = p.parseStringExpr()
+		if p.curTok == TokAs {
+			p.expect(TokAs)
+			stmt.Alias = p.parseIdentExpr()
+		}
+
+		return stmt
 	case TokFun:
 		return p.parseFunc()
 	case TokVar:
@@ -661,6 +668,16 @@ func (p *Parser) assignTokens() []Token {
 	}
 }
 
+func (p *Parser) parseStringExpr() *StringExpr {
+	_, str := p.expect(TokString)
+	unquotedStr, err := strconv.Unquote(str)
+	Assert(err == nil, "unquoted string expected: "+str)
+	// implicitly add end of string to unquoted string
+	raw := unquotedStr
+	unquotedStr += "\x00"
+	return &StringExpr{Value: str, Unquoted: unquotedStr, Raw: raw, start: p.startOfLastExpected(), end: p.endOfLastExpected()}
+}
+
 func (p *Parser) parseSimpleExpr() Expr {
 	switch p.curTok {
 	case TokLBracket:
@@ -682,12 +699,7 @@ func (p *Parser) parseSimpleExpr() Expr {
 		p.expect(TokNil)
 		return &NilExpr{p.startOfLastExpected(), p.endOfLastExpected()}
 	case TokString:
-		_, str := p.expect(TokString)
-		unquotedStr, err := strconv.Unquote(str)
-		Assert(err == nil, "unquoted string expected: "+str)
-		// implicitly add end of string to unquoted string
-		unquotedStr += "\x00"
-		return &StringExpr{Value: str, Unquoted: unquotedStr, start: p.startOfLastExpected(), end: p.endOfLastExpected()}
+		return p.parseStringExpr()
 	case TokChar:
 		_, char := p.expect(TokChar)
 		var value rune

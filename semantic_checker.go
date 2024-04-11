@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"path"
 	"sort"
 	"strconv"
 	"strings"
@@ -13,6 +14,7 @@ const sliceScheme = "slice<%s>"
 const pointerScheme = "pointer<%s>"
 const unresolvedType = "<unresolved>"
 const autoCastScheme = "auto_cast<%s>"
+const selectorScheme = "selector<%s, %s>"
 const contextScheme = "context_based<%s,...>"
 
 type Symbol interface {
@@ -21,8 +23,30 @@ type Symbol interface {
 	IsVarDef() bool
 	IsTypeDef() bool
 	IsFuncDef() bool
+	IsPackage() bool
 	TypeName() string
 }
+
+type UseSym struct {
+	Def    *UseStmt
+	Alias  string
+	Name   string
+	Path   string
+	Module *Module
+}
+
+func (u *UseSym) IsSymbol() {}
+func (u *UseSym) Pos() (start Pos, end Pos) {
+	return u.Def.Pos()
+}
+func (u *UseSym) IsVarDef() bool  { return false }
+func (u *UseSym) IsTypeDef() bool { return false }
+func (u *UseSym) IsFuncDef() bool { return false }
+func (u *UseSym) TypeName() string {
+	return u.Name
+}
+
+func (u *UseSym) IsPackage() bool { return true }
 
 type TypeField struct {
 	Node       *Field
@@ -41,10 +65,16 @@ type TypeDef struct {
 	DefNode   DefStmt
 	Name      string
 	Fields    []TypeField
-	Methods   []any
+	Methods   []*FuncDef
 	Completed bool
 	IsStruct  bool
 	IsBuiltin bool
+	Package   string
+	Scope     *Scope
+}
+
+func (t *TypeDef) IsPackage() bool {
+	return false
 }
 
 func (t *TypeDef) TypeName() string {
@@ -78,6 +108,7 @@ type VarDef struct {
 	IsConst  bool
 }
 
+func (v *VarDef) IsPackage() bool { return false }
 func (v *VarDef) IsSymbol()       {}
 func (v *VarDef) IsVarDef() bool  { return true }
 func (v *VarDef) IsTypeDef() bool { return false }
@@ -99,14 +130,18 @@ type FuncDef struct {
 	Type        string // indicates return type
 	Params      []Param
 	MethodOf    string
+	MethodOfTyp *TypeDef
 	External    bool
 	Variadic    bool
 	Completed   bool
 	TypeCast    bool
 	CheckParams bool
 	GenericType string
+	Package     string
+	IsBuiltin   bool
 }
 
+func (f *FuncDef) IsPackage() bool { return false }
 func (f *FuncDef) TypeName() string {
 	return f.Type
 }
@@ -144,13 +179,28 @@ func (c *Checker) EnterScope() *Scope {
 	return newScope
 }
 
+func (c *Checker) enterPackageScope(name string, scope *Scope) *Scope {
+	if scope == nil {
+		scope = c.packageScopes[name]
+	}
+	c.packageScopes[name] = scope
+	c.tmpScope = c.Scope
+	c.Scope = scope
+	return c.packageScopes[name]
+}
+
 func (c *Checker) enterTypeScope(name string) *Scope {
 	if c.typeScopes[name] == nil {
 		c.typeScopes[name] = c.EnterScope()
 	}
-
+	sym := c.LookupSym(name)
+	typSym := sym.(*TypeDef)
 	c.tmpScope = c.Scope
 	c.Scope = c.typeScopes[name]
+
+	if typSym.Scope == nil {
+		typSym.Scope = c.typeScopes[name]
+	}
 	return c.typeScopes[name]
 }
 
@@ -169,11 +219,18 @@ func (c *Checker) CloseScope() *Scope {
 
 type Checker struct {
 	*Scope
-	tmpScope    *Scope
-	Package     *Package
-	Errors      []Error
-	currentFile string
-	typeScopes  map[string]*Scope
+	initScope     *Scope
+	tmpScope      *Scope
+	Package       *Package
+	Errors        []Error
+	currentFile   string
+	typeScopes    map[string]*Scope
+	packageScopes map[string]*Scope
+	TypeDefs      []*TypeDef
+	FuncDefs      []*FuncDef
+	GlobalVarDefs []*VarDef
+	Imports       []*Module
+	ImportMap     map[string]*Module
 
 	// Context
 	currentSym Symbol
@@ -196,12 +253,15 @@ func (c *Checker) turnTempScopeBack() {
 func (c *Checker) Check() ([]Error, bool) {
 
 	c.EnterScope()
+	c.initScope = c.Scope
 	c.typeScopes = make(map[string]*Scope)
+	c.packageScopes = make(map[string]*Scope)
 	defer c.CloseScope()
 	c.initGlobalScope()
 	c.collectSignatures()
 	stmts := make([]*VarDefStmt, 0)
-	for _, stmt := range c.Package.Stmts {
+	allStmts := c.Package.AllStatements()
+	for _, stmt := range allStmts {
 		switch stmt := stmt.(type) {
 		case *VarDefStmt:
 			stmts = append(stmts, stmt)
@@ -237,6 +297,20 @@ func (c *Checker) addSymbol(name string, sym Symbol) error {
 		return fmt.Errorf("duplicate symbol %s", name)
 	}
 	c.Scope.Symbols[name] = sym
+
+	switch sym := sym.(type) {
+	case *VarDef:
+		if sym.IsGlobal {
+			c.GlobalVarDefs = append(c.GlobalVarDefs, sym)
+		}
+	case *TypeDef:
+		c.TypeDefs = append(c.TypeDefs, sym)
+	case *FuncDef:
+		c.FuncDefs = append(c.FuncDefs, sym)
+	case *UseSym:
+		c.Imports = append(c.Imports, sym.Module)
+	}
+
 	return nil
 }
 
@@ -248,6 +322,8 @@ func (c *Checker) addBuiltinTypes(names ...string) {
 			Fields:    nil,
 			Methods:   nil,
 			Completed: true,
+			IsBuiltin: true,
+			Package:   c.Package.Name,
 		})
 
 		if name != "void" {
@@ -261,6 +337,7 @@ func (c *Checker) addBuiltinTypes(names ...string) {
 				Variadic:  false,
 				Completed: true,
 				TypeCast:  true,
+				IsBuiltin: true,
 			})
 		}
 	}
@@ -283,6 +360,7 @@ func (c *Checker) initGlobalScope() {
 		Variadic:    true,
 		Completed:   false,
 		CheckParams: true,
+		IsBuiltin:   true,
 	})
 	AssertErr(err)
 	err = c.addSymbol("scanf_internal", &FuncDef{
@@ -298,6 +376,7 @@ func (c *Checker) initGlobalScope() {
 		Variadic:    true,
 		Completed:   false,
 		CheckParams: true,
+		IsBuiltin:   true,
 	})
 	AssertErr(err)
 
@@ -318,6 +397,7 @@ func (c *Checker) initGlobalScope() {
 		External:    true,
 		Completed:   true,
 		GenericType: "!T",
+		IsBuiltin:   true,
 	})
 	AssertErr(err)
 
@@ -334,6 +414,7 @@ func (c *Checker) initGlobalScope() {
 		External:    true,
 		Completed:   true,
 		GenericType: "!T",
+		IsBuiltin:   true,
 	})
 	AssertErr(err)
 
@@ -353,6 +434,7 @@ func (c *Checker) initGlobalScope() {
 		TypeCast:    false,
 		CheckParams: false,
 		GenericType: "",
+		IsBuiltin:   true,
 	})
 	AssertErr(err)
 
@@ -373,6 +455,7 @@ func (c *Checker) initGlobalScope() {
 		TypeCast:    false,
 		CheckParams: false,
 		GenericType: "",
+		IsBuiltin:   true,
 	})
 	AssertErr(err)
 }
@@ -430,6 +513,9 @@ func (c *Checker) getNameOfType(expr Expr) string {
 			expr.Size = &NumberExpr{Value: -1}
 			return fmt.Sprintf(sliceScheme, c.getNameOfType(expr.Type))
 		}
+	case *SelectorExpr:
+		left := c.getNameOfType(expr.Selector)
+		return fmt.Sprintf("%s.%s", left, c.getNameOfType(expr.Ident))
 	default:
 		panic("unreachable")
 	}
@@ -440,7 +526,7 @@ func (c *Checker) errorf(start, end Pos, format string, args ...interface{}) {
 		Start:   start,
 		End:     end,
 		Message: fmt.Sprintf(format, args...),
-		File:    "./input.sea",
+		File:    c.currentFile,
 	})
 }
 
@@ -843,7 +929,7 @@ func (c *Checker) checkImplStmt(stmt *ImplStmt) {
 	for _, innerStmt := range stmt.Stmts {
 		switch innerStmt := innerStmt.(type) {
 		case *FuncDefStmt:
-			c.collectFuncSignature(innerStmt, typSym.TypeName())
+			c.collectFuncSignature(innerStmt, typSym.TypeName(), typSym)
 		default:
 			panic("Unreachable impl-block statement")
 		}
@@ -1177,7 +1263,7 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 			c.leaveCtx()
 		}
 
-		return def.Name, nil
+		return typ, nil
 	case *BinaryExpr:
 
 		left, err := c.checkExpr(expr.Left)
@@ -1218,15 +1304,21 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 
 		var ltyp = c.extractBaseType(left)
 
-		typDef := c.LookupSym(ltyp)
-		if typDef == nil || !typDef.IsTypeDef() {
+		relatedSym := c.LookupSym(ltyp)
+		if relatedSym == nil || (!relatedSym.IsTypeDef() && !relatedSym.IsPackage()) {
 			start, end := expr.Selector.Pos()
 			c.errorf(start, end, "provided type %s is not defined", left)
 			return unresolvedType, fmt.Errorf("unknown type %s", left)
 		}
 
-		c.enterTypeScope(ltyp)
-		defer c.turnTempScopeBack()
+		if relatedSym.IsTypeDef() {
+			c.enterTypeScope(ltyp)
+			defer c.turnTempScopeBack()
+		} else {
+			c.enterPackageScope(ltyp, nil)
+			defer c.turnTempScopeBack()
+		}
+
 		right, err := c.checkExpr(expr.Ident)
 		if err != nil {
 			return unresolvedType, err
@@ -1436,6 +1528,7 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 		funcDef := c.currentSym.(*FuncDef)
 		expr.TypeCast = funcDef.TypeCast
 		expr.MethodOf = funcDef.MethodOf
+		expr.Package = funcDef.Package
 
 		var optionalCount = 0
 		for _, p := range funcDef.Params {
@@ -1576,6 +1669,15 @@ func (c *Checker) checkBlockStmt(stmt *BlockStmt) {
 func (c *Checker) check() {
 
 	for _, stmt := range c.Package.Stmts {
+		c.currentFile = c.Package.FileMap[stmt]
+		switch stmt := stmt.(type) {
+		case *UseStmt:
+			c.checkUseStmt(stmt)
+		}
+	}
+
+	for _, stmt := range c.Package.AllStatements() {
+		c.currentFile = c.Package.FileMap[stmt]
 		switch stmt := stmt.(type) {
 		case *ImplStmt:
 			c.checkImplStmt(stmt)
@@ -1589,7 +1691,38 @@ func (c *Checker) check() {
 	}
 }
 
-func (c *Checker) collectFuncSignature(stmt *FuncDefStmt, methodOf string) {
+func (c *Checker) checkUseStmt(stmt *UseStmt) {
+	joinPath := path.Join(BasePath, stmt.Path.Raw)
+	module := Import(joinPath, c.ImportMap)
+	stmt.useCtx = &UseCtx{parent: c.ctx, Module: module}
+	c.ImportMap[joinPath] = module
+	var symName string
+	var alias string
+	if stmt.Alias != nil {
+		symName = stmt.Alias.Name
+		alias = stmt.Alias.Name
+	} else {
+		pathSplit := strings.Split(joinPath, "/")
+		lenSplit := len(pathSplit)
+		symName = pathSplit[lenSplit-1]
+	}
+	stmt.useCtx.Alias = symName
+	for _, typDef := range module.TypeDefs {
+		if !typDef.IsBuiltin {
+			cloned := *typDef
+			cloned.Name = symName + "." + typDef.Name
+			AssertErr(c.addSymbol(symName+"."+typDef.Name, &cloned))
+			c.typeScopes[symName+"."+typDef.Name] = typDef.Scope
+		}
+	}
+
+	c.enterPackageScope(symName, module.Scope)
+	c.turnTempScopeBack()
+	err := c.addSymbol(symName, &UseSym{Def: stmt, Name: symName, Alias: alias, Path: joinPath, Module: module})
+	AssertErr(err)
+}
+
+func (c *Checker) collectFuncSignature(stmt *FuncDefStmt, methodOf string, typSym *TypeDef) {
 	if _, ok := c.Symbols[stmt.Name.Name]; ok {
 		start, end := stmt.Pos()
 		c.errorf(start, end, "redeclared symbol %s", stmt.Name.Name)
@@ -1602,6 +1735,7 @@ func (c *Checker) collectFuncSignature(stmt *FuncDefStmt, methodOf string) {
 		Type:     c.getNameOfType(stmt.Type),
 		External: stmt.IsExternal,
 		MethodOf: methodOf,
+		Package:  c.Package.Name,
 	}
 
 	params := make([]Param, 0)
@@ -1620,47 +1754,57 @@ func (c *Checker) collectFuncSignature(stmt *FuncDefStmt, methodOf string) {
 		})
 	}
 	funcDef.Params = params
-	c.Symbols[stmt.Name.Name] = funcDef
+	err := c.addSymbol(stmt.Name.Name, funcDef)
+	AssertErr(err)
+	if typSym != nil {
+		typSym.Methods = append(typSym.Methods, funcDef)
+		funcDef.MethodOfTyp = typSym
+	}
 }
 
 func (c *Checker) collectSignatures() {
-	for _, stmt := range c.Package.Stmts {
-		switch stmt := stmt.(type) {
-		case *StructDefStmt:
+	for _, file := range c.Package.Files {
+		for _, stmt := range file.Stmts {
+			switch stmt := stmt.(type) {
+			case *StructDefStmt:
 
-			if _, ok := c.Symbols[stmt.Name.Name]; ok {
-				panic("Not implemented")
-			}
+				if _, ok := c.Symbols[stmt.Name.Name]; ok {
+					panic("Not implemented")
+				}
 
-			typeDef := &TypeDef{
-				DefNode:   stmt,
-				Name:      stmt.Name.Name,
-				Fields:    make([]TypeField, 0),
-				Completed: false,
-				Methods:   make([]any, 0),
-			}
+				typeDef := &TypeDef{
+					DefNode:   stmt,
+					Name:      stmt.Name.Name,
+					Fields:    make([]TypeField, 0),
+					Completed: false,
+					Methods:   make([]*FuncDef, 0),
+					Package:   c.Package.Name,
+				}
 
-			for _, field := range stmt.Fields {
-				typeDef.Fields = append(typeDef.Fields, TypeField{
-					Name: field.Name.Name,
-					Type: c.getNameOfType(field.Type),
-					Node: field,
+				for _, field := range stmt.Fields {
+					typeDef.Fields = append(typeDef.Fields, TypeField{
+						Name: field.Name.Name,
+						Type: c.getNameOfType(field.Type),
+						Node: field,
+					})
+				}
+
+				err := c.addSymbol(stmt.Name.Name, typeDef)
+				AssertErr(err)
+			case *VarDefStmt:
+				if _, ok := c.Symbols[stmt.Name.Name]; ok {
+					panic("Not implemented")
+				}
+				err := c.addSymbol(stmt.Name.Name, &VarDef{
+					DefNode: stmt,
+					Name:    stmt.Name.Name,
+					Type:    c.getNameOfType(stmt.Type),
+					IsConst: stmt.IsConst,
 				})
+				AssertErr(err)
+			case *FuncDefStmt:
+				c.collectFuncSignature(stmt, "", nil)
 			}
-
-			c.Symbols[stmt.Name.Name] = typeDef
-		case *VarDefStmt:
-			if _, ok := c.Symbols[stmt.Name.Name]; ok {
-				panic("Not implemented")
-			}
-			c.Symbols[stmt.Name.Name] = &VarDef{
-				DefNode: stmt,
-				Name:    stmt.Name.Name,
-				Type:    c.getNameOfType(stmt.Type),
-				IsConst: stmt.IsConst,
-			}
-		case *FuncDefStmt:
-			c.collectFuncSignature(stmt, "")
 		}
 	}
 }

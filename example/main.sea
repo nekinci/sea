@@ -1,0 +1,8 @@
+package main
+
+
+fun i32 deneme() {
+    return 0
+}
+
+

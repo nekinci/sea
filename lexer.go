@@ -279,6 +279,10 @@ func (l *Lexer) tok() Token {
 			return TokPackage
 		case "const":
 			return TokConst
+		case "use":
+			return TokUse
+		case "as":
+			return TokAs
 		}
 
 		return TokIdentifier

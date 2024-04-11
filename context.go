@@ -112,3 +112,9 @@ type ForCtx struct {
 func (f *ForCtx) parentCtx() Ctx {
 	return f.parent
 }
+
+type UseCtx struct {
+	parent Ctx
+	Module *Module
+	Alias  string
+}

@@ -80,7 +80,14 @@ func (c *Compiler) Lookup(name string) value.Value {
 
 func (c *Compiler) compile() {
 	Assert(c.pkg != nil, "pkg is nil")
-	Assert(c.module != nil, "module is nil")
+	Assert(c.module != nil, "file is nil")
+
+	for _, stmt := range c.pkg.Stmts {
+		switch stmt := stmt.(type) {
+		case *UseStmt:
+			c.compileUseStmt(stmt)
+		}
+	}
 
 	for _, stmt := range c.pkg.Stmts {
 		switch stmt := stmt.(type) {
@@ -324,7 +331,7 @@ func (c *Compiler) initBuiltinFuncs() {
 
 	c.addToStrFuncs("i8", "i16", "i32", "i64", "f16", "f32", "f64", "bool")
 
-	initFn := module.NewFunc("__init__", types.Void)
+	initFn := module.NewFunc("__"+c.PackageName()+"__"+"__init__", types.Void)
 	c.funcs["init"] = initFn
 	initFn.Visibility = enum.VisibilityHidden
 
@@ -340,6 +347,16 @@ func (c *Compiler) addToStrFuncs(names ...string) {
 	}
 }
 
+func (c *Compiler) selectorToStr(expr Expr) string {
+	switch expr := expr.(type) {
+	case *IdentExpr:
+		return expr.Name
+	case *SelectorExpr:
+		return c.selectorToStr(expr.Selector) + "." + c.selectorToStr(expr.Ident)
+	default:
+		panic("unimplemented selectorToStr case")
+	}
+}
 func (c *Compiler) resolveType(expr Expr) types.Type {
 	switch expr := expr.(type) {
 	case *IdentExpr:
@@ -357,6 +374,12 @@ func (c *Compiler) resolveType(expr Expr) types.Type {
 			return c.types["slice"]
 		}
 		return types.NewArray(uint64(expr.Size.(*NumberExpr).Value), typ)
+	case *SelectorExpr:
+		name := c.selectorToStr(expr)
+		if typ, ok := c.types[name]; ok {
+			return typ
+		}
+		panic(fmt.Sprintf("no provided type %s", name))
 	}
 
 	panic("unreachable")
@@ -500,10 +523,14 @@ func (c *Compiler) compileFunc(def *FuncDefStmt, isMethod bool, thisType types.T
 	}
 	var f *ir.Func
 	if onlyDeclare {
-		f = c.module.NewFunc(llvmName, typ, params...)
-		c.funcs[name] = f
+		if !def.IsExternal {
+			f = c.module.NewFunc(llvmName, typ, params...)
+		} else {
+			f = c.module.NewFunc(name, typ, params...)
+		}
+		c.funcs[llvmName] = f
 	} else {
-		f = c.funcs[name]
+		f = c.funcs[llvmName]
 	}
 	c.currentFunc = f
 	if !def.IsExternal {
@@ -575,6 +602,76 @@ func (c *Compiler) getNumericConstant(number float64, typ string) constant.Const
 	}
 
 	return constant.NewInt(types.I32, int64(number))
+}
+
+func (c *Compiler) compileUseStmt(stmt *UseStmt) {
+	funcDefs := stmt.useCtx.Module.FuncDef
+	typeDefs := stmt.useCtx.Module.TypeDefs
+	for _, typeDef := range typeDefs {
+		if typeDef.IsBuiltin {
+			continue
+		}
+		name := stmt.useCtx.Alias + "." + typeDef.Name
+		typ := c.findType(stmt.useCtx.Module.Module.TypeDefs, typeDef.Package+"."+typeDef.Name)
+		t := c.module.NewTypeDef(name, typ)
+		c.types[name] = t
+		for i, field := range typeDef.Fields {
+			c.typesIndexMap[fieldIndexKey{
+				field: field.Name,
+				typ:   name,
+			}] = i
+		}
+	}
+	for _, funcDef := range funcDefs {
+		if funcDef.IsBuiltin {
+			continue
+		}
+		var name string
+		if funcDef.External {
+			name = funcDef.Name
+		} else {
+			name = funcDef.Package + "."
+			if funcDef.MethodOf != "" {
+				name = name + funcDef.MethodOf + "."
+			}
+			name = name + funcDef.Name
+		}
+
+		var fn = c.findFunc(stmt.useCtx.Module.Module.Funcs, name)
+		decl := c.cloneFuncDecl(fn)
+		decl.Linkage = enum.LinkageExternal
+		c.funcs[name] = decl
+
+	}
+}
+
+func (c *Compiler) cloneFuncDecl(fn *ir.Func) *ir.Func {
+	name := fn.Name()
+	retTyp := fn.Sig.RetType
+	params := fn.Params
+	newFn := c.module.NewFunc(name, retTyp, params...)
+	newFn.ReturnAttrs = fn.ReturnAttrs
+	newFn.FuncAttrs = fn.FuncAttrs
+	return newFn
+}
+
+func (c *Compiler) findFunc(funcs []*ir.Func, name string) *ir.Func {
+	for _, fn_ := range funcs {
+		if fn_.Name() == name {
+			return fn_
+		}
+	}
+	return nil
+}
+
+func (c *Compiler) findType(types []types.Type, name string) types.Type {
+	for _, typ := range types {
+		if typ.Name() == name {
+			return typ
+		}
+	}
+
+	return nil
 }
 
 func (c *Compiler) compileStmt(stmt Stmt) {
@@ -651,6 +748,8 @@ func (c *Compiler) compileStmt(stmt Stmt) {
 		e := c.compileExpr(innerStmt.Expr)
 		val := generateOperation(c.currentBlock, e, c.getNumericConstant(1.0, innerStmt.Type), Sub)
 		c.currentBlock.NewStore(val, e.(*ir.InstLoad).Src)
+	case *UseStmt:
+		// pass
 	default:
 		panic("unreachable compileStmt on compiler")
 
@@ -977,44 +1076,32 @@ func (c *Compiler) customCall(expr *CallExpr) value.Value {
 func (c *Compiler) call(expr *CallExpr) value.Value {
 	b := c.currentBlock
 
-	var isMethodCall bool
+	var isLeftSelectorExpr bool
 	var funcName string
 	switch e := expr.Left.(type) {
 	case *IdentExpr:
 		funcName = e.Name
 	case *SelectorExpr:
-		isMethodCall = true
+		isLeftSelectorExpr = true
 		funcName = e.Ident.(*IdentExpr).Name
 	default:
 		panic("TODO unreachable call")
 	}
 	args := make([]value.Value, 0)
 
-	if expr.MethodOf != "" && isMethodCall {
+	if expr.MethodOf != "" && isLeftSelectorExpr {
 		funcName = expr.MethodOf + "." + funcName
 		args = append(args, c.getThisArg(expr.Left))
+	}
+
+	if expr.Package != "" {
+		funcName = expr.Package + "." + funcName
 	}
 
 	var returnVal value.Value = nil
 	if !expr.TypeCast {
 		fun := c.getFunc(funcName)
-		if len(fun.Params) > 0 {
-			id := 0
-			if isMethodCall {
-				id = 1
-			}
-
-			if id < len(fun.Params) {
-				param := fun.Params[id]
-				if len(param.Attrs) > 0 {
-					if _, ok := param.Attrs[0].(ir.SRet); ok {
-						alloc := c.currentBlock.NewAlloca(param.Type().(*types.PointerType).ElemType)
-						args = append(args, alloc)
-						returnVal = alloc
-					}
-				}
-			}
-		}
+		args, returnVal = c.handleSRet(fun, isLeftSelectorExpr, args, returnVal)
 
 		for i, e := range expr.Args {
 			arg := c.compileExpr(e)
@@ -1022,7 +1109,7 @@ func (c *Compiler) call(expr *CallExpr) value.Value {
 			if returnVal != nil {
 				idx += 1
 			}
-			if isMethodCall {
+			if isLeftSelectorExpr && expr.MethodOf != "" {
 				idx += 1
 			}
 
@@ -1036,7 +1123,6 @@ func (c *Compiler) call(expr *CallExpr) value.Value {
 						}
 
 					}
-					//param.xAttrs = slices.Delete(param.Attrs, 0, 1)
 				}
 			}
 
@@ -1051,6 +1137,27 @@ func (c *Compiler) call(expr *CallExpr) value.Value {
 	} else {
 		return c.doCast(funcName, expr)
 	}
+}
+
+func (c *Compiler) handleSRet(fun *ir.Func, isLeftSelectorExpr bool, args []value.Value, returnVal value.Value) ([]value.Value, value.Value) {
+	if len(fun.Params) > 0 {
+		id := 0
+		if isLeftSelectorExpr {
+			id = 1
+		}
+
+		if id < len(fun.Params) {
+			param := fun.Params[id]
+			if len(param.Attrs) > 0 {
+				if _, ok := param.Attrs[0].(ir.SRet); ok {
+					alloc := c.currentBlock.NewAlloca(param.Type().(*types.PointerType).ElemType)
+					args = append(args, alloc)
+					returnVal = alloc
+				}
+			}
+		}
+	}
+	return args, returnVal
 }
 
 func (c *Compiler) resolveFieldIndex(name, typ string) (int, error) {
@@ -1471,7 +1578,7 @@ func (c *Compiler) compileExpr(expr Expr) value.Value {
 	case *StringExpr:
 		v := expr.Unquoted
 		v2 := constant.NewCharArrayFromString(v)
-		strPtr := c.module.NewGlobalDef("", v2)
+		strPtr := c.module.NewGlobalDef("."+c.PackageName()+"."+c.GetSequence(), v2)
 		strPtr.Align = 1
 		strPtr.Immutable = true
 		strPtr.UnnamedAddr = enum.UnnamedAddrUnnamedAddr
@@ -1823,7 +1930,7 @@ func generateOperation(block *ir.Block, value1, value2 value.Value, op Operation
 }
 
 func (c *Compiler) init() {
-	Assert(c.module != nil, "module not initialized")
+	Assert(c.module != nil, "file not initialized")
 
 	c.currentScope = &CompileScope{
 		variables: make(map[string]value.Value),

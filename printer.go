@@ -7,11 +7,11 @@ import (
 
 type ASTWriter struct {
 	io.Writer
-	pkg    *Package
+	pkg    *File
 	indent int
 }
 
-func NewASTWriter(w io.Writer, p *Package) *ASTWriter {
+func NewASTWriter(w io.Writer, p *File) *ASTWriter {
 	return &ASTWriter{w, p, 0}
 }
 

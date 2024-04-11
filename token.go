@@ -79,4 +79,6 @@ const (
 	TokPackage        Token = "package"
 	TokNew            Token = "new"
 	TokConst          Token = "const"
+	TokUse            Token = "use"
+	TokAs             Token = "as"
 )

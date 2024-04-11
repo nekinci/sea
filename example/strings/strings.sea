@@ -1,0 +1,19 @@
+package strings
+
+struct StrBuilder {
+    string s
+}
+
+impl StrBuilder {
+
+    fun void append(string s2) {
+        this.s = this.s + s2
+    }
+
+
+}
+fun i32 print_string(string s) {
+    var string s2 = "deneme"
+    println(s)
+    return 0
+}

@@ -3,16 +3,16 @@ package main
 import (
 	"fmt"
 	"github.com/llir/llvm/ir"
-	"github.com/llir/llvm/ir/constant"
-	"github.com/llir/llvm/ir/types"
 	"log"
 	"os"
 	"os/exec"
 	"path"
+	"path/filepath"
 	"strings"
 )
 
 var Target string
+var BasePath string
 
 func Assert(cond bool, msg string) {
 	if cond {
@@ -41,25 +41,39 @@ func FatalPrintf(format string, args ...any) {
 	os.Exit(1)
 }
 
-func main2() {
-	module := ir.NewModule()
-	newStruct := types.NewStruct(types.I32, types.I32)
-	typ := module.NewTypeDef("deneme", newStruct)
-	_ = typ
-	str := constant.NewStruct(newStruct)
-	str.Fields = append(str.Fields, constant.NewInt(types.I32, 3))
-	str.Fields = append(str.Fields, constant.NewInt(types.I32, 5))
-	f := module.NewFunc("main", types.I32)
-	block := f.NewBlock("entry")
-	alloca := block.NewAlloca(typ)
-	block.NewStore(str, alloca)
-	block.NewRet(constant.NewInt(types.I32, 0))
-	module.WriteTo(os.Stdout)
-}
-
 func Parse(path string) *Package {
-	parser := NewParser(path)
-	pckg, errors := parser.parse()
+	dir, err2 := os.ReadDir(path)
+	if err2 != nil {
+		FatalPrintf("failed to read dir:  %v", err2)
+	}
+
+	pack := &Package{
+		Name:      "",
+		Files:     make([]*File, 0),
+		FileMap:   make(map[Stmt]string),
+		ImportMap: make(map[*UseStmt]string),
+	}
+
+	errors := make([]Error, 0)
+	for _, item := range dir {
+		if !item.IsDir() {
+			if filepath.Ext(item.Name()) == ".sea" {
+				join := filepath.Join(path, item.Name())
+				fileContent, err2 := os.ReadFile(join)
+
+				if err2 != nil {
+					FatalPrintf("failed to read file: %v", err2)
+				}
+
+				parser := NewParser(join, string(fileContent))
+				file, errors2 := parser.parse()
+				pack.Name = file.PackageStmt.Name.Name
+				errors = append(errors, errors2...)
+				pack.Files = append(pack.Files, file)
+			}
+		}
+	}
+
 	if len(errors) > 0 {
 		for _, err := range errors {
 			fmt.Print(err)
@@ -67,11 +81,35 @@ func Parse(path string) *Package {
 		ExitPrintf("")
 	}
 
-	return pckg
+	return pack
 }
 
-func Compile(p *string, pckg *Package) string {
-	outputPath := path.Join(os.TempDir(), "plus.ll")
+func Compile(pckg *Package) *ir.Module {
+	compiler := Compiler{}
+	compiler.module = ir.NewModule()
+	compiler.pkg = pckg
+	compiler.init()
+	compiler.compile()
+	return compiler.module
+}
+
+func CompilePackage(path string) *Module {
+	pack := Parse(path)
+	checker := Check(pack, make(map[string]*Module))
+	module := Compile(pack)
+	return &Module{
+		Module:    module,
+		TypeDefs:  checker.TypeDefs,
+		FuncDef:   checker.FuncDefs,
+		Globals:   checker.GlobalVarDefs,
+		Imports:   checker.Imports,
+		Name:      pack.Name,
+		ImportMap: checker.ImportMap,
+	}
+}
+
+func CompileWrite(p *string, module *Module) string {
+	outputPath := path.Join(os.TempDir(), module.Name+".ll")
 	if p != nil {
 		outputPath = *p
 	}
@@ -81,12 +119,7 @@ func Compile(p *string, pckg *Package) string {
 		panic(err)
 	}
 
-	compiler := Compiler{}
-	compiler.module = ir.NewModule()
-	compiler.init()
-	compiler.pkg = pckg
-	compiler.compile()
-	_, err = compiler.module.WriteTo(newFile)
+	_, err = module.Module.WriteTo(newFile)
 	if err != nil {
 		panic(err)
 	}
@@ -94,10 +127,11 @@ func Compile(p *string, pckg *Package) string {
 	return outputPath
 }
 
-func Check(pckg *Package) {
+func Check(pckg *Package, importMap map[string]*Module) *Checker {
 	var checker = &Checker{
-		Package: pckg,
-		Errors:  make([]Error, 0),
+		Package:   pckg,
+		Errors:    make([]Error, 0),
+		ImportMap: importMap,
 	}
 
 	errors, err2 := checker.Check()
@@ -107,6 +141,8 @@ func Check(pckg *Package) {
 		}
 		ExitPrintf("")
 	}
+
+	return checker
 }
 
 func parseCommandLineArgs() {
@@ -144,13 +180,11 @@ commands:
 		sealang check <file_name>
 `)
 	} else if command == "run" {
-		pckg := Parse(os.Args[2])
-		Check(pckg)
-		output := Compile(nil, pckg)
-		compile(output, "./runtime/runtime.c", true, true, "")
+		BasePath = os.Args[2]
+		CompileIt("./runtime/runtime.c", BasePath)
 	} else if command == "check" {
 		pckg := Parse(os.Args[2])
-		Check(pckg)
+		Check(pckg, make(map[string]*Module))
 	} else if command == "build" {
 		outputPath := ""
 		if argsLen > 3 {
@@ -163,10 +197,13 @@ commands:
 			}
 			outputPath = os.Args[4]
 		}
+		BasePath = os.Args[2]
 		pckg := Parse(os.Args[2])
-		Check(pckg)
-		output := Compile(nil, pckg)
-		compile(output, "./runtime/runtime.c", false, false, outputPath)
+		_ = outputPath
+		Check(pckg, make(map[string]*Module))
+		panic("HANDLE")
+		//output := CompileWrite(nil, pckg)
+		//	compile(output, "./runtime/runtime.c", false, false, outputPath)
 
 	}
 
@@ -175,45 +212,58 @@ commands:
 func devMode() {
 	Target = "arm64-apple-darwin23.1.0" // TODO
 	_ = os.Setenv("DEBUG", "")
-	// read compileExpr from file
-	pckg := Parse("./input.sea")
-	Check(pckg)
-	outputLL := "./input.ll"
-	output := Compile(&outputLL, pckg)
-	compile(output, "./runtime/runtime.c", true, true, "")
+	BasePath = "./example"
+	CompileIt("./runtime/runtime.c", BasePath)
 }
 
-func main() {
-	//	devMode()
-	parseCommandLineArgs()
-}
-
-// TODO change it
-func compile(path, runtimePath string, runBinary bool, outputForwarding bool, outputPath string) {
-
-	if outputPath == "" {
-		outputPath = path[:strings.LastIndex(path, ".")] + ""
+func CompileIt(runtimePath string, outputPath string) {
+	runtimeOut := compileRuntime(runtimePath)
+	pathList := make([]string, 0)
+	pathList = append(pathList, runtimeOut)
+	compilePackage := CompilePackage(BasePath)
+	join := path.Join(BasePath, ".out")
+	err := os.Mkdir(join, os.ModePerm)
+	if !os.IsExist(err) {
+		AssertErr(err)
 	}
+	o := path.Join(join, compilePackage.Name+".ll")
+	output := CompileWrite(&o, compilePackage)
+	pathList = append(pathList, output)
+	for _, v := range compilePackage.ImportMap {
+		o := path.Join(join, v.Name+".ll")
+		write := CompileWrite(&o, v)
+		pathList = append(pathList, write)
+	}
+	compileAll(pathList, "./example/example", true, true)
+}
 
-	// clang ${path} -o ${path}.o
-
+func compileRuntime(runtimePath string) string {
 	runtimeOutputPath := runtimePath[:strings.LastIndex(runtimePath, ".")] + ".ll"
 	runtimeCompile := exec.Command("clang", runtimePath, "-S", "-emit-llvm", "-o", runtimeOutputPath)
-	if outputForwarding {
-		runtimeCompile.Stdout = os.Stdout
-		runtimeCompile.Stderr = os.Stdout
-	}
 	if err := runtimeCompile.Run(); err != nil {
 		log.Fatalf("failed to run command for clang: %v", err)
 	}
+	return runtimeOutputPath
+}
 
-	command := exec.Command("clang", path, runtimeOutputPath, "-o", outputPath)
-	if outputForwarding {
+func main() {
+	devMode()
+	//parseCommandLineArgs()
+}
+
+func compileAll(pathList []string, outputPath string, outputForward bool, runBinary bool) {
+
+	argList := make([]string, 0)
+	argList = append(argList, pathList...)
+	command := exec.Command("clang", argList...)
+	command.Args = append(command.Args, "-o")
+	command.Args = append(command.Args, outputPath)
+	if outputForward {
 		command.Stdout = os.Stdout
-		command.Stderr = os.Stdout
+		command.Stderr = os.Stderr
 	}
-	err := command.Run()
 
+	err := command.Run()
 	if err != nil {
 		log.Fatalf("failed to run command for clang: %v", err)
 	}
@@ -228,5 +278,20 @@ func compile(path, runtimePath string, runBinary bool, outputForwarding bool, ou
 			os.Exit(runBinaryCmd.ProcessState.ExitCode())
 		}
 	}
+
+}
+
+// TODO change it
+func compile(path string, abc string, runBinary bool, outputForwarding bool, outputPath string) {
+
+	if outputPath == "" {
+		outputPath = path[:strings.LastIndex(path, ".")] + ""
+	}
+
+	// clang ${path} -o ${path}.o
+
+	pathList := make([]string, 0)
+	pathList = append(pathList, path)
+	compileAll(pathList, outputPath, runBinary, outputForwarding)
 
 }

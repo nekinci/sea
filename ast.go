@@ -20,12 +20,39 @@ type Contexter interface {
 }
 
 type Package struct {
-	Name        string
-	Stmts       []Stmt
-	PackageStmt *PackageStmt
+	Name      string
+	Files     []*File
+	Stmts     []Stmt
+	FileMap   map[Stmt]string
+	ImportMap map[*UseStmt]string
 }
 
-func (p *Package) Pos() (Pos, Pos) {
+func (p *Package) AllStatements() []Stmt {
+	if p.Stmts == nil {
+		p.Stmts = make([]Stmt, 0)
+		for _, file := range p.Files {
+			for _, stmt := range file.Stmts {
+				p.FileMap[stmt] = file.Name
+				p.Stmts = append(p.Stmts, stmt)
+				switch stmt := stmt.(type) {
+				case *UseStmt:
+					p.ImportMap[stmt] = file.Name
+				}
+			}
+		}
+	}
+
+	return p.Stmts
+}
+
+type File struct {
+	Name          string
+	Stmts         []Stmt
+	PackageStmt   *PackageStmt
+	SmallestOrder int
+}
+
+func (p *File) Pos() (Pos, Pos) {
 	start, _ := p.Stmts[0].Pos()
 	end, _ := p.Stmts[len(p.Stmts)-1].Pos()
 	return start, end
@@ -86,6 +113,7 @@ func (p *ParenExpr) IsExpr() {}
 type StringExpr struct {
 	Value      string
 	Unquoted   string
+	Raw        string
 	start, end Pos
 	ctx        Ctx
 }
@@ -224,6 +252,7 @@ type CallExpr struct {
 	Args     []Expr
 	end      Pos
 	MethodOf string
+	Package  string
 	TypeCast bool
 	ctx      Ctx
 }
@@ -376,6 +405,24 @@ func (f *FuncDefStmt) Pos() (Pos, Pos) {
 
 func (f *FuncDefStmt) IsStmt() {}
 func (f *FuncDefStmt) IsDef()  {}
+
+type UseStmt struct {
+	useCtx *UseCtx
+	Path   *StringExpr
+	Alias  *IdentExpr
+	start  Pos
+}
+
+func (u *UseStmt) IsStmt() {}
+func (u *UseStmt) Pos() (Pos, Pos) {
+	if u.Alias != nil {
+		_, end := u.Alias.Pos()
+		return u.start, end
+	}
+
+	_, end := u.Path.Pos()
+	return u.start, end
+}
 
 type ParamExpr struct {
 	Name *IdentExpr
