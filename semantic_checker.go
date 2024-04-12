@@ -179,13 +179,12 @@ func (c *Checker) EnterScope() *Scope {
 	return newScope
 }
 
-func (c *Checker) enterPackageScope(name string, scope *Scope) *Scope {
-	if scope == nil {
-		scope = c.packageScopes[name]
+func (c *Checker) enterPackageScope(name string) *Scope {
+	if c.packageScopes[name] == nil {
+		c.packageScopes[name] = c.EnterScope()
 	}
-	c.packageScopes[name] = scope
 	c.tmpScope = c.Scope
-	c.Scope = scope
+	c.Scope = c.packageScopes[name]
 	return c.packageScopes[name]
 }
 
@@ -219,18 +218,19 @@ func (c *Checker) CloseScope() *Scope {
 
 type Checker struct {
 	*Scope
-	initScope     *Scope
-	tmpScope      *Scope
-	Package       *Package
-	Errors        []Error
-	currentFile   string
-	typeScopes    map[string]*Scope
-	packageScopes map[string]*Scope
-	TypeDefs      []*TypeDef
-	FuncDefs      []*FuncDef
-	GlobalVarDefs []*VarDef
-	Imports       []*Module
-	ImportMap     map[string]*Module
+	initScope      *Scope
+	tmpScope       *Scope
+	Package        *Package
+	Errors         []Error
+	currentFile    string
+	typeScopes     map[string]*Scope
+	packageScopes  map[string]*Scope
+	TypeDefs       []*TypeDef
+	FuncDefs       []*FuncDef
+	GlobalVarDefs  []*VarDef
+	Imports        []*Module
+	ImportMap      map[string]*Module  // importPath -> module
+	ImportAliasMap map[string][]string // fileName -> aliases
 
 	// Context
 	currentSym Symbol
@@ -470,6 +470,20 @@ func (scope *Scope) LookupSym(name string) Symbol {
 	}
 
 	return nil
+}
+
+func (c *Checker) LookupSym(name string) Symbol {
+	sym := c.Scope.LookupSym(name)
+	if sym != nil && sym.IsTypeDef() {
+		typSym := sym.(*TypeDef)
+		if !typSym.IsBuiltin && typSym.Package != c.Package.Name {
+			extractedSymName := strings.Split(typSym.Name, ".")[0]
+			if !c.checkImported(extractedSymName) {
+				return nil
+			}
+		}
+	}
+	return sym
 }
 
 func (scope *Scope) GetSymbol(name string) Symbol {
@@ -1315,7 +1329,7 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 			c.enterTypeScope(ltyp)
 			defer c.turnTempScopeBack()
 		} else {
-			c.enterPackageScope(ltyp, nil)
+			c.enterPackageScope(ltyp)
 			defer c.turnTempScopeBack()
 		}
 
@@ -1617,6 +1631,16 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 
 }
 
+func (c *Checker) restoreExternalTyp(alias, typ string) string {
+	t := c.extractBaseType(typ)
+	t2 := strings.Split(typ, ".")
+	if len(t2) > 1 {
+		return typ
+	}
+
+	return strings.Replace(typ, t, fmt.Sprintf("%s.%s", alias, t), 1)
+}
+
 func (c *Checker) checkConstAssign(expr *AssignExpr) {
 	if ident, ok := expr.Left.(*IdentExpr); ok {
 		v := c.LookupSym(ident.Name)
@@ -1691,11 +1715,46 @@ func (c *Checker) check() {
 	}
 }
 
+func (c *Checker) addImportAlias(symName string) {
+	Assert(c.currentFile != "", "currentFile cannot be empty!")
+	if c.ImportAliasMap[c.currentFile] == nil {
+		c.ImportAliasMap[c.currentFile] = make([]string, 0)
+	}
+	c.ImportAliasMap[c.currentFile] = append(c.ImportAliasMap[c.currentFile], symName)
+}
+
+func (c *Checker) checkImported(symName string) bool {
+	imports := c.ImportAliasMap[c.currentFile]
+	if imports == nil {
+		return false
+	}
+
+	for _, sym := range imports {
+		if sym == symName {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (c *Checker) checkAlreadyImported(useStmt *UseStmt, symName string) {
+	if c.checkImported(symName) {
+		start, end := useStmt.Pos()
+		c.errorf(start, end, "%s already imported", symName)
+	}
+}
+
 func (c *Checker) checkUseStmt(stmt *UseStmt) {
 	joinPath := path.Join(BasePath, stmt.Path.Raw)
-	module := Import(joinPath, c.ImportMap)
+	var module *Module
+	if _, ok := c.ImportMap[joinPath]; ok {
+		module = c.ImportMap[joinPath]
+	} else {
+		module = Import(joinPath, c.ImportMap)
+		c.ImportMap[joinPath] = module
+	}
 	stmt.useCtx = &UseCtx{parent: c.ctx, Module: module}
-	c.ImportMap[joinPath] = module
 	var symName string
 	var alias string
 	if stmt.Alias != nil {
@@ -1707,19 +1766,33 @@ func (c *Checker) checkUseStmt(stmt *UseStmt) {
 		symName = pathSplit[lenSplit-1]
 	}
 	stmt.useCtx.Alias = symName
+	c.checkAlreadyImported(stmt, symName)
+	c.addImportAlias(symName)
 	for _, typDef := range module.TypeDefs {
 		if !typDef.IsBuiltin {
 			cloned := *typDef
 			cloned.Name = symName + "." + typDef.Name
-			AssertErr(c.addSymbol(symName+"."+typDef.Name, &cloned))
+			c.addSymbol(symName+"."+typDef.Name, &cloned)
 			c.typeScopes[symName+"."+typDef.Name] = typDef.Scope
 		}
 	}
 
-	c.enterPackageScope(symName, module.Scope)
+	c.enterPackageScope(symName)
+	for _, funcDef := range module.FuncDef {
+		if !funcDef.IsBuiltin && funcDef.MethodOf == "" {
+			cloned := *funcDef
+			cloned.Type = c.restoreExternalTyp(symName, cloned.Type)
+			for i, param := range cloned.Params {
+				param.Type = c.restoreExternalTyp(symName, param.Type)
+				cloned.Params[i] = param
+			}
+			AssertErr(c.addSymbol(funcDef.Name, &cloned))
+		}
+	}
+
 	c.turnTempScopeBack()
-	err := c.addSymbol(symName, &UseSym{Def: stmt, Name: symName, Alias: alias, Path: joinPath, Module: module})
-	AssertErr(err)
+	_ = c.addSymbol(symName, &UseSym{Def: stmt, Name: symName, Alias: alias, Path: joinPath, Module: module})
+
 }
 
 func (c *Checker) collectFuncSignature(stmt *FuncDefStmt, methodOf string, typSym *TypeDef) {

@@ -12,6 +12,12 @@ impl StrBuilder {
 
 
 }
+
+fun StrBuilder* doSomething(StrBuilder* strBuilder) {
+    println(strBuilder.s)
+    return strBuilder
+}
+
 fun i32 print_string(string s) {
     var string s2 = "deneme"
     println(s)

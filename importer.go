@@ -11,6 +11,7 @@ type Module struct {
 	ImportMap map[string]*Module
 	Scope     *Scope
 	Name      string
+	Compiled  bool
 }
 
 func Import(path string, importMap map[string]*Module) *Module {

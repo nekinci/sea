@@ -129,9 +129,10 @@ func CompileWrite(p *string, module *Module) string {
 
 func Check(pckg *Package, importMap map[string]*Module) *Checker {
 	var checker = &Checker{
-		Package:   pckg,
-		Errors:    make([]Error, 0),
-		ImportMap: importMap,
+		Package:        pckg,
+		Errors:         make([]Error, 0),
+		ImportMap:      importMap,
+		ImportAliasMap: make(map[string][]string),
 	}
 
 	errors, err2 := checker.Check()

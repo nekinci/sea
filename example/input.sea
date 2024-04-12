@@ -1,10 +1,13 @@
 package main
 
-use "strings" as strings2
+use "strings"
+use "strings" as str2
 
 fun i32 main() {
-    var strings2.StrBuilder* strBuilder = &strings2.StrBuilder{s:"dddd"}
+    var strings.StrBuilder* strBuilder = &strings.StrBuilder{s:"dddd"}
     strBuilder.s = "x"
+    strings.doSomething(strBuilder)
+    str2.doSomething(strBuilder)
     println(strBuilder.s)
     return 0
 }

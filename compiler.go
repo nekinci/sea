@@ -53,12 +53,14 @@ type Compiler struct {
 	currentFunc  *ir.Func
 	currentType  types.Type
 
-	funcs         map[string]*ir.Func
-	types         map[string]types.Type
-	typesIndexMap map[fieldIndexKey]int
-	globals       map[string]value.Value
-	pkg           *Package
-	sequence      int
+	funcs          map[string]*ir.Func
+	types          map[string]types.Type
+	typesIndexMap  map[fieldIndexKey]int
+	globals        map[string]value.Value
+	pkg            *Package
+	importMap      map[string]bool
+	importAliasMap map[string]bool
+	sequence       int
 }
 
 func (c *Compiler) PackageName() string {
@@ -81,6 +83,7 @@ func (c *Compiler) Lookup(name string) value.Value {
 func (c *Compiler) compile() {
 	Assert(c.pkg != nil, "pkg is nil")
 	Assert(c.module != nil, "file is nil")
+	c.importAliasMap = make(map[string]bool)
 
 	for _, stmt := range c.pkg.Stmts {
 		switch stmt := stmt.(type) {
@@ -604,17 +607,21 @@ func (c *Compiler) getNumericConstant(number float64, typ string) constant.Const
 	return constant.NewInt(types.I32, int64(number))
 }
 
-func (c *Compiler) compileUseStmt(stmt *UseStmt) {
-	funcDefs := stmt.useCtx.Module.FuncDef
-	typeDefs := stmt.useCtx.Module.TypeDefs
+func (c *Compiler) compileTypeImports(stmt *UseStmt, typeDefs []*TypeDef) {
 	for _, typeDef := range typeDefs {
 		if typeDef.IsBuiltin {
 			continue
 		}
+
 		name := stmt.useCtx.Alias + "." + typeDef.Name
 		typ := c.findType(stmt.useCtx.Module.Module.TypeDefs, typeDef.Package+"."+typeDef.Name)
-		t := c.module.NewTypeDef(name, typ)
-		c.types[name] = t
+		typ2 := *(typ.(*types.StructType))
+		if _, ok := c.types[typeDef.Package+"."+typeDef.Name]; !ok {
+			t := c.module.NewTypeDef(typeDef.Package+"."+typeDef.Name, &typ2)
+			c.types[typeDef.Package+"."+typeDef.Name] = t
+		}
+		c.types[name] = &typ2
+
 		for i, field := range typeDef.Fields {
 			c.typesIndexMap[fieldIndexKey{
 				field: field.Name,
@@ -622,6 +629,24 @@ func (c *Compiler) compileUseStmt(stmt *UseStmt) {
 			}] = i
 		}
 	}
+}
+func (c *Compiler) compileUseStmt(stmt *UseStmt) {
+	_, ok2 := c.importAliasMap[stmt.useCtx.Alias]
+	funcDefs := stmt.useCtx.Module.FuncDef
+
+	typeDefs := stmt.useCtx.Module.TypeDefs
+
+	if !ok2 {
+		c.importAliasMap[stmt.useCtx.Alias] = true
+		c.compileTypeImports(stmt, typeDefs)
+	}
+	if !stmt.useCtx.Module.Compiled {
+		stmt.useCtx.Module.Compiled = true
+		c.compileImportFuncs(stmt, funcDefs)
+	}
+}
+
+func (c *Compiler) compileImportFuncs(stmt *UseStmt, funcDefs []*FuncDef) {
 	for _, funcDef := range funcDefs {
 		if funcDef.IsBuiltin {
 			continue
