@@ -21,6 +21,7 @@ type Contexter interface {
 
 type Package struct {
 	Name      string
+	Path      string
 	Files     []*File
 	Stmts     []Stmt
 	FileMap   map[Stmt]string

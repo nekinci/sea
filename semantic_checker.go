@@ -62,15 +62,18 @@ type Param struct {
 }
 
 type TypeDef struct {
-	DefNode   DefStmt
-	Name      string
-	Fields    []TypeField
-	Methods   []*FuncDef
-	Completed bool
-	IsStruct  bool
-	IsBuiltin bool
-	Package   string
-	Scope     *Scope
+	DefNode      DefStmt
+	Name         string
+	Fields       []TypeField
+	Methods      []*FuncDef
+	Completed    bool
+	IsStruct     bool
+	IsBuiltin    bool
+	Package      string
+	Scope        *Scope
+	ReferredFrom *TypeDef
+	ImportedFrom *Module
+	PackagePath  string
 }
 
 func (t *TypeDef) IsPackage() bool {
@@ -138,6 +141,7 @@ type FuncDef struct {
 	CheckParams bool
 	GenericType string
 	Package     string
+	PackagePath string
 	IsBuiltin   bool
 }
 
@@ -230,6 +234,7 @@ type Checker struct {
 	GlobalVarDefs  []*VarDef
 	Imports        []*Module
 	ImportMap      map[string]*Module  // importPath -> module
+	PathAliasMap   map[string]string   // importPath -> alias
 	ImportAliasMap map[string][]string // fileName -> aliases
 
 	// Context
@@ -893,12 +898,14 @@ func (c *Checker) checkFuncDef(stmt *FuncDefStmt) {
 	defer c.leaveCtx()
 
 	t := c.extractBaseType(funcdef.Type)
-	typ := c.LookupSym(t).(*TypeDef)
+	typ := c.LookupSym(t)
 	if typ == nil {
 		ctx.isProblematic = true
+		ctx.expectedType = funcdef.Type
 		start, end := funcdef.DefNode.Type.Pos()
 		c.errorf(start, end, "Type %s is not defined", funcdef.Type)
 	} else {
+		typ := typ.(*TypeDef)
 		ctx.expectedType = funcdef.Type
 		ctx.returnsStruct = typ.IsStruct && !c.isPointer(funcdef.Type)
 		ctx.returnTypeSym = typ
@@ -1631,11 +1638,12 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 
 }
 
-func (c *Checker) restoreExternalTyp(alias, typ string) string {
+func (c *Checker) restoreExternalTyp(alias, typ, packagePath string) string {
 	t := c.extractBaseType(typ)
-	t2 := strings.Split(typ, ".")
+	t2 := strings.Split(t, ".")
 	if len(t2) > 1 {
-		return typ
+		alias2 := c.PathAliasMap[packagePath]
+		return strings.Replace(typ, t2[0], alias2, 1)
 	}
 
 	return strings.Replace(typ, t, fmt.Sprintf("%s.%s", alias, t), 1)
@@ -1715,12 +1723,13 @@ func (c *Checker) check() {
 	}
 }
 
-func (c *Checker) addImportAlias(symName string) {
+func (c *Checker) addImportAlias(path, symName string) {
 	Assert(c.currentFile != "", "currentFile cannot be empty!")
 	if c.ImportAliasMap[c.currentFile] == nil {
 		c.ImportAliasMap[c.currentFile] = make([]string, 0)
 	}
 	c.ImportAliasMap[c.currentFile] = append(c.ImportAliasMap[c.currentFile], symName)
+	c.PathAliasMap[path] = symName
 }
 
 func (c *Checker) checkImported(symName string) bool {
@@ -1767,10 +1776,12 @@ func (c *Checker) checkUseStmt(stmt *UseStmt) {
 	}
 	stmt.useCtx.Alias = symName
 	c.checkAlreadyImported(stmt, symName)
-	c.addImportAlias(symName)
+	c.addImportAlias(joinPath, symName)
 	for _, typDef := range module.TypeDefs {
 		if !typDef.IsBuiltin {
 			cloned := *typDef
+			cloned.ImportedFrom = module
+			cloned.ReferredFrom = typDef
 			cloned.Name = symName + "." + typDef.Name
 			c.addSymbol(symName+"."+typDef.Name, &cloned)
 			c.typeScopes[symName+"."+typDef.Name] = typDef.Scope
@@ -1781,10 +1792,22 @@ func (c *Checker) checkUseStmt(stmt *UseStmt) {
 	for _, funcDef := range module.FuncDef {
 		if !funcDef.IsBuiltin && funcDef.MethodOf == "" {
 			cloned := *funcDef
-			cloned.Type = c.restoreExternalTyp(symName, cloned.Type)
+			sym := stmt.useCtx.Module.Scope.LookupSym(c.extractBaseType(cloned.Type))
+			if !sym.(*TypeDef).IsBuiltin {
+				cloned.Type = c.restoreExternalTyp(symName, cloned.Type, sym.(*TypeDef).PackagePath)
+			}
+
+			cloned.Params = make([]Param, 0)
+			for _, p := range funcDef.Params {
+				cloned.Params = append(cloned.Params, p)
+			}
+
 			for i, param := range cloned.Params {
-				param.Type = c.restoreExternalTyp(symName, param.Type)
-				cloned.Params[i] = param
+				sym := stmt.useCtx.Module.Scope.LookupSym(c.extractBaseType(param.Type))
+				if !sym.(*TypeDef).IsBuiltin {
+					param.Type = c.restoreExternalTyp(symName, param.Type, sym.(*TypeDef).PackagePath)
+					cloned.Params[i] = param
+				}
 			}
 			AssertErr(c.addSymbol(funcDef.Name, &cloned))
 		}
@@ -1803,12 +1826,13 @@ func (c *Checker) collectFuncSignature(stmt *FuncDefStmt, methodOf string, typSy
 	}
 
 	funcDef := &FuncDef{
-		DefNode:  stmt,
-		Name:     stmt.Name.Name,
-		Type:     c.getNameOfType(stmt.Type),
-		External: stmt.IsExternal,
-		MethodOf: methodOf,
-		Package:  c.Package.Name,
+		DefNode:     stmt,
+		Name:        stmt.Name.Name,
+		Type:        c.getNameOfType(stmt.Type),
+		External:    stmt.IsExternal,
+		MethodOf:    methodOf,
+		Package:     c.Package.Name,
+		PackagePath: c.Package.Path,
 	}
 
 	params := make([]Param, 0)
@@ -1846,12 +1870,13 @@ func (c *Checker) collectSignatures() {
 				}
 
 				typeDef := &TypeDef{
-					DefNode:   stmt,
-					Name:      stmt.Name.Name,
-					Fields:    make([]TypeField, 0),
-					Completed: false,
-					Methods:   make([]*FuncDef, 0),
-					Package:   c.Package.Name,
+					DefNode:     stmt,
+					Name:        stmt.Name.Name,
+					Fields:      make([]TypeField, 0),
+					Completed:   false,
+					Methods:     make([]*FuncDef, 0),
+					Package:     c.Package.Name,
+					PackagePath: c.Package.Path,
 				}
 
 				for _, field := range stmt.Fields {

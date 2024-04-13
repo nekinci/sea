@@ -1,0 +1,7 @@
+package io
+
+use "strings" as str
+
+fun str.StrBuilder* test(str.StrBuilder* strBuilder) {
+    return strBuilder
+}

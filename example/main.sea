@@ -1,10 +1,16 @@
 package main
 
-use "strings" as strings2
-fun i32 deneme() {
-    var strings2.StrBuilder* strBuilder = nil
+use "strings"
+use "io"
 
+fun i32 main() {
+    var strings.StrBuilder* strBuilder = &strings.StrBuilder{s:"dddd"}
+    strBuilder.s = "x"
+    strings.doSomething(strBuilder)
+    io.test(strBuilder)
+    println(strBuilder.s)
     return 0
 }
+
 
 

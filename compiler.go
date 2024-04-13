@@ -614,20 +614,25 @@ func (c *Compiler) compileTypeImports(stmt *UseStmt, typeDefs []*TypeDef) {
 		}
 
 		name := stmt.useCtx.Alias + "." + typeDef.Name
-		typ := c.findType(stmt.useCtx.Module.Module.TypeDefs, typeDef.Package+"."+typeDef.Name)
-		typ2 := *(typ.(*types.StructType))
-		if _, ok := c.types[typeDef.Package+"."+typeDef.Name]; !ok {
-			t := c.module.NewTypeDef(typeDef.Package+"."+typeDef.Name, &typ2)
-			c.types[typeDef.Package+"."+typeDef.Name] = t
-		}
-		c.types[name] = &typ2
+		if typeDef.ReferredFrom == nil {
+			typ := c.findType(stmt.useCtx.Module.Module.TypeDefs, typeDef.Package+"."+typeDef.Name)
+			typ2 := *(typ.(*types.StructType))
+			if _, ok := c.types[typeDef.Package+"."+typeDef.Name]; !ok {
+				t := c.module.NewTypeDef(typeDef.Package+"."+typeDef.Name, &typ2)
+				c.types[typeDef.Package+"."+typeDef.Name] = t
+			}
+			c.types[name] = &typ2
 
-		for i, field := range typeDef.Fields {
-			c.typesIndexMap[fieldIndexKey{
-				field: field.Name,
-				typ:   name,
-			}] = i
+			for i, field := range typeDef.Fields {
+				c.typesIndexMap[fieldIndexKey{
+					field: field.Name,
+					typ:   name,
+				}] = i
+			}
+		} else {
+			c.types[name] = c.findType(c.module.TypeDefs, typeDef.ReferredFrom.Package+"."+typeDef.ReferredFrom.Name)
 		}
+
 	}
 }
 func (c *Compiler) compileUseStmt(stmt *UseStmt) {

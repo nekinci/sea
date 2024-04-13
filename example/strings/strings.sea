@@ -6,10 +6,9 @@ struct StrBuilder {
 
 impl StrBuilder {
 
-    fun void append(string s2) {
+    fun void append2(string s2) {
         this.s = this.s + s2
     }
-
 
 }
 

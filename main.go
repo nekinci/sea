@@ -52,6 +52,7 @@ func Parse(path string) *Package {
 		Files:     make([]*File, 0),
 		FileMap:   make(map[Stmt]string),
 		ImportMap: make(map[*UseStmt]string),
+		Path:      path,
 	}
 
 	errors := make([]Error, 0)
@@ -133,6 +134,7 @@ func Check(pckg *Package, importMap map[string]*Module) *Checker {
 		Errors:         make([]Error, 0),
 		ImportMap:      importMap,
 		ImportAliasMap: make(map[string][]string),
+		PathAliasMap:   make(map[string]string),
 	}
 
 	errors, err2 := checker.Check()

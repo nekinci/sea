@@ -1084,11 +1084,11 @@ define void @__get_argv_slice__(%struct.slice* noalias sret(%struct.slice) align
 
 ; Function Attrs: noinline nounwind optnone ssp uwtable
 define void @init() #0 {
-  call void bitcast (void (...)* @__init__ to void ()*)()
+  call void bitcast (void (...)* @__main____init__ to void ()*)()
   ret void
 }
 
-declare void @__init__(...) #2
+declare void @__main____init__(...) #2
 
 ; Function Attrs: noinline nounwind optnone ssp uwtable
 define i32 @main(i32 noundef %0, i8** noundef %1) #0 {
@@ -1099,7 +1099,7 @@ define i32 @main(i32 noundef %0, i8** noundef %1) #0 {
   store i32 0, i32* %3, align 4
   store i32 %0, i32* %4, align 4
   store i8** %1, i8*** %5, align 8
-  call void bitcast (void (...)* @__init__ to void ()*)()
+  call void bitcast (void (...)* @__main____init__ to void ()*)()
   %7 = load i32, i32* %4, align 4
   %8 = load i32, i32* %4, align 4
   %9 = load i8**, i8*** %5, align 8
