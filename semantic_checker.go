@@ -1778,6 +1778,30 @@ func (c *Checker) checkAlreadyImported(useStmt *UseStmt, symName string) {
 	}
 }
 
+func (c *Checker) cloneScope(scope *Scope, symName string) *Scope {
+	tmp := c.Scope
+	s := &Scope{}
+	s.Parent = c.Scope
+	s.Symbols = make(map[string]Symbol)
+	s.Children = make([]*Scope, 0)
+	c.Scope = s
+
+	for k, symbol := range scope.Symbols {
+		_ = k
+		if symbol.IsVarDef() {
+			sym := symbol.(*VarDef)
+			c.importVarDef(scope, sym, symName)
+		} else if symbol.IsFuncDef() {
+			sym := symbol.(*FuncDef)
+			c.importFunc(scope, sym, symName)
+		}
+	}
+
+	c.Scope = tmp
+	return s
+
+}
+
 func (c *Checker) checkUseStmt(stmt *UseStmt) {
 	joinPath := path.Join(BasePath, stmt.Path.Raw)
 	var module *Module
@@ -1803,53 +1827,66 @@ func (c *Checker) checkUseStmt(stmt *UseStmt) {
 	c.addImportAlias(joinPath, symName)
 	for _, typDef := range module.TypeDefs {
 		if !typDef.IsBuiltin {
-			cloned := *typDef
-			cloned.ImportedFrom = module
-			cloned.ReferredFrom = typDef
-			cloned.Name = symName + "." + typDef.Name
-			c.addSymbol(symName+"."+typDef.Name, &cloned)
-			c.typeScopes[symName+"."+typDef.Name] = typDef.Scope
+			c.importTypeDef(typDef, module, symName)
 		}
 	}
 
 	c.enterPackageScope(symName)
 	for _, funcDef := range module.FuncDef {
 		if !funcDef.IsBuiltin && funcDef.MethodOf == "" {
-			cloned := *funcDef
-			sym := stmt.useCtx.Module.Scope.LookupSym(c.extractBaseType(cloned.Type))
-			if !sym.(*TypeDef).IsBuiltin {
-				cloned.Type = c.restoreExternalTyp(symName, cloned.Type, sym.(*TypeDef).PackagePath)
-			}
-
-			cloned.Params = make([]Param, 0)
-			for _, p := range funcDef.Params {
-				cloned.Params = append(cloned.Params, p)
-			}
-
-			for i, param := range cloned.Params {
-				sym := stmt.useCtx.Module.Scope.LookupSym(c.extractBaseType(param.Type))
-				if !sym.(*TypeDef).IsBuiltin {
-					param.Type = c.restoreExternalTyp(symName, param.Type, sym.(*TypeDef).PackagePath)
-					cloned.Params[i] = param
-				}
-			}
-			AssertErr(c.addSymbol(funcDef.Name, &cloned))
+			c.importFunc(stmt.useCtx.Module.Scope, funcDef, symName)
 		}
 	}
 
 	for _, varDef := range module.Globals {
-		cloned := *varDef
-		sym := stmt.useCtx.Module.Scope.LookupSym(c.extractBaseType(cloned.Type))
-		if !sym.(*TypeDef).IsBuiltin {
-			cloned.Type = c.restoreExternalTyp(symName, cloned.Type, sym.(*TypeDef).PackagePath)
-		}
-		cloned.External = true
-		AssertErr(c.addSymbol(varDef.Name, &cloned))
+		c.importVarDef(stmt.useCtx.Module.Scope, varDef, symName)
 	}
 
 	c.turnTempScopeBack()
 	_ = c.addSymbol(symName, &UseSym{Def: stmt, Name: symName, Alias: alias, Path: joinPath, Module: module})
 
+}
+
+func (c *Checker) importTypeDef(typDef *TypeDef, module *Module, symName string) {
+	cloned := *typDef
+	cloned.ImportedFrom = module
+	cloned.ReferredFrom = typDef
+	cloned.Name = symName + "." + typDef.Name
+	c.addSymbol(symName+"."+typDef.Name, &cloned)
+	c.typeScopes[symName+"."+typDef.Name] = c.cloneScope(typDef.Scope, symName)
+}
+
+func (c *Checker) importVarDef(scope *Scope, varDef *VarDef, symName string) {
+	cloned := *varDef
+	sym := scope.LookupSym(c.extractBaseType(cloned.Type))
+	if !sym.(*TypeDef).IsBuiltin {
+		cloned.Type = c.restoreExternalTyp(symName, cloned.Type, sym.(*TypeDef).PackagePath)
+	}
+	cloned.External = true
+	AssertErr(c.addSymbol(varDef.Name, &cloned))
+}
+
+func (c *Checker) importFunc(scope *Scope, funcDef *FuncDef, symName string) {
+	cloned := *funcDef
+	sym := scope.LookupSym(c.extractBaseType(cloned.Type))
+	if !sym.(*TypeDef).IsBuiltin {
+		cloned.Type = c.restoreExternalTyp(symName, cloned.Type, sym.(*TypeDef).PackagePath)
+	}
+
+	cloned.Params = make([]Param, 0)
+	for _, p := range funcDef.Params {
+		cloned.Params = append(cloned.Params, p)
+	}
+
+	for i, param := range cloned.Params {
+		sym := scope.LookupSym(c.extractBaseType(param.Type))
+		if !sym.(*TypeDef).IsBuiltin {
+			param.Type = c.restoreExternalTyp(symName, param.Type, sym.(*TypeDef).PackagePath)
+			cloned.Params[i] = param
+		}
+	}
+	name := funcDef.Name
+	AssertErr(c.addSymbol(name, &cloned))
 }
 
 func (c *Checker) collectFuncSignature(stmt *FuncDefStmt, methodOf string, typSym *TypeDef) {

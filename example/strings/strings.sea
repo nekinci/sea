@@ -1,6 +1,6 @@
 package strings
 
-const string CONST_EXAMPLE_1 = "DENEME"
+var string CONST_EXAMPLE_1 = "DENEME"
 
 struct StrBuilder {
     string s
@@ -8,10 +8,18 @@ struct StrBuilder {
 
 impl StrBuilder {
 
-    fun void append2(string s2) {
+    fun StrBuilder* append(string s2) {
         this.s = this.s + s2
+        return this
     }
 
+    fun void print_result() {
+        println(this.s)
+    }
+}
+
+fun void printVar() {
+    println(CONST_EXAMPLE_1)
 }
 
 fun StrBuilder* doSomething(StrBuilder* strBuilder) {

@@ -4,11 +4,13 @@ use "strings" as strs
 use "io"
 
 fun i32 main() {
+    strs.CONST_EXAMPLE_1 = "NO CONST"
     var strs.StrBuilder* strBuilder = &strs.StrBuilder{s:"dddd"}
-    strBuilder.s = "x"
     strs.doSomething(strBuilder)
-    var strs.StrBuilder* s = io.test(strBuilder)
-    println(strs.CONST_EXAMPLE_1)
+    strs.printVar()
+    strBuilder.append("1")
+    strBuilder.append("2")
+    strBuilder.print_result()
     return 0
 }
 
