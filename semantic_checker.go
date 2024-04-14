@@ -257,6 +257,28 @@ func (c *Checker) turnTempScopeBack() {
 	c.Scope = c.tmpScope
 }
 
+func (c *Checker) checkPackageNames() {
+	files := c.Package.Files
+	if len(files) > 0 {
+		pathName := c.getPackageNameFromPath(c.Package.Path)
+		var lastName string
+		lastName = files[0].PackageStmt.Name.Name
+		if lastName != "main" && pathName != lastName {
+			c.currentFile = files[0].Name
+			start, end := files[0].PackageStmt.Pos()
+			c.errorf(start, end, "package name must align with the last directory in the file path, expected %s, got %s", pathName, lastName)
+		}
+		for _, file := range files {
+			name := file.PackageStmt.Name.Name
+			if name != lastName {
+				start, end := file.PackageStmt.Pos()
+				c.currentFile = file.Name
+				c.errorf(start, end, "duplicate package name declaration within the same package")
+			}
+		}
+	}
+}
+
 func (c *Checker) Check() ([]Error, bool) {
 
 	c.EnterScope()
@@ -264,6 +286,9 @@ func (c *Checker) Check() ([]Error, bool) {
 	c.typeScopes = make(map[string]*Scope)
 	c.packageScopes = make(map[string]*Scope)
 	defer c.CloseScope()
+
+	c.checkPackageNames()
+
 	c.initGlobalScope()
 	c.collectSignatures()
 	stmts := make([]*VarDefStmt, 0)
@@ -1802,6 +1827,11 @@ func (c *Checker) cloneScope(scope *Scope, symName string) *Scope {
 
 }
 
+func (c *Checker) getPackageNameFromPath(joinPath string) string {
+	pathSplit := strings.Split(joinPath, "/")
+	lenSplit := len(pathSplit)
+	return pathSplit[lenSplit-1]
+}
 func (c *Checker) checkUseStmt(stmt *UseStmt) {
 	joinPath := path.Join(BasePath, stmt.Path.Raw)
 	var module *Module
@@ -1818,9 +1848,7 @@ func (c *Checker) checkUseStmt(stmt *UseStmt) {
 		symName = stmt.Alias.Name
 		alias = stmt.Alias.Name
 	} else {
-		pathSplit := strings.Split(joinPath, "/")
-		lenSplit := len(pathSplit)
-		symName = pathSplit[lenSplit-1]
+		symName = c.getPackageNameFromPath(joinPath)
 	}
 	stmt.useCtx.Alias = symName
 	c.checkAlreadyImported(stmt, symName)
