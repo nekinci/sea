@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"github.com/llir/llvm/ir"
+	"github.com/llir/llvm/ir/enum"
+	"github.com/llir/llvm/ir/types"
 	"log"
 	"os"
 	"os/exec"
@@ -230,6 +232,7 @@ func CompileIt(runtimePath string, outputPath string) {
 		AssertErr(err)
 	}
 	o := path.Join(join, compilePackage.Name+".ll")
+	wrapInitFuncs(compilePackage)
 	output := CompileWrite(&o, compilePackage)
 	pathList = append(pathList, output)
 	for _, v := range compilePackage.ImportMap {
@@ -238,6 +241,36 @@ func CompileIt(runtimePath string, outputPath string) {
 		pathList = append(pathList, write)
 	}
 	compileAll(pathList, "./example/example", true, true)
+}
+
+func wrapInitFuncs(compilePackage *Module) {
+	initWrapperFn := compilePackage.Module.NewFunc("____INIT____", types.Void)
+	block := initWrapperFn.NewBlock("entry")
+	mainInit := getInitFunc("main", compilePackage.Module.Funcs)
+	if mainInit != nil {
+		block.NewCall(mainInit)
+	}
+
+	for _, module := range compilePackage.ImportMap {
+		depInit := getInitFunc(module.Name, module.Module.Funcs)
+		if depInit != nil {
+			extern := compilePackage.Module.NewFunc(depInit.Name(), depInit.Sig.RetType)
+			extern.Linkage = enum.LinkageExternal
+			block.NewCall(depInit)
+		}
+	}
+
+	block.NewRet(nil)
+}
+
+func getInitFunc(pack string, funcs []*ir.Func) *ir.Func {
+	for _, fn := range funcs {
+		if fn.Name() == fmt.Sprintf("__%s____init__", pack) {
+			return fn
+		}
+	}
+
+	return nil
 }
 
 func compileRuntime(runtimePath string) string {

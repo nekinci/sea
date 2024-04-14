@@ -1,5 +1,7 @@
 package strings
 
+const string CONST_EXAMPLE_1 = "DENEME"
+
 struct StrBuilder {
     string s
 }

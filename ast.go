@@ -329,6 +329,7 @@ func (e *IdentExpr) Pos() (Pos, Pos) {
 type SelectorExpr struct {
 	Ident    Expr
 	Selector Expr
+	Ctx      *SelectorCtx
 }
 
 func (e *SelectorExpr) Pos() (Pos, Pos) {

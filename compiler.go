@@ -336,8 +336,6 @@ func (c *Compiler) initBuiltinFuncs() {
 
 	initFn := module.NewFunc("__"+c.PackageName()+"__"+"__init__", types.Void)
 	c.funcs["init"] = initFn
-	initFn.Visibility = enum.VisibilityHidden
-
 }
 
 func (c *Compiler) addToStrFuncs(names ...string) {
@@ -626,7 +624,7 @@ func (c *Compiler) compileTypeImports(stmt *UseStmt, typeDefs []*TypeDef) {
 			for i, field := range typeDef.Fields {
 				c.typesIndexMap[fieldIndexKey{
 					field: field.Name,
-					typ:   name,
+					typ:   typeDef.Package + "." + typeDef.Name,
 				}] = i
 			}
 		} else {
@@ -638,9 +636,8 @@ func (c *Compiler) compileTypeImports(stmt *UseStmt, typeDefs []*TypeDef) {
 func (c *Compiler) compileUseStmt(stmt *UseStmt) {
 	_, ok2 := c.importAliasMap[stmt.useCtx.Alias]
 	funcDefs := stmt.useCtx.Module.FuncDef
-
+	globals := stmt.useCtx.Module.Globals
 	typeDefs := stmt.useCtx.Module.TypeDefs
-
 	if !ok2 {
 		c.importAliasMap[stmt.useCtx.Alias] = true
 		c.compileTypeImports(stmt, typeDefs)
@@ -649,6 +646,14 @@ func (c *Compiler) compileUseStmt(stmt *UseStmt) {
 		stmt.useCtx.Module.Compiled = true
 		c.compileImportFuncs(stmt, funcDefs)
 	}
+
+	for _, global := range globals {
+		d := c.module.NewGlobal(global.Package+"."+global.Name, c.types[global.Type])
+		d.ExternallyInitialized = true
+		d.Linkage = enum.LinkageExternal
+		c.Define(stmt.useCtx.Alias+"."+global.Name, d)
+	}
+
 }
 
 func (c *Compiler) compileImportFuncs(stmt *UseStmt, funcDefs []*FuncDef) {
@@ -1779,6 +1784,13 @@ func (c *Compiler) compileExpr(expr Expr) value.Value {
 		}
 
 	case *SelectorExpr:
+		if expr.Ctx.IsPackage {
+			return c.compileExpr(&IdentExpr{
+				Name:  c.selectorToStr(expr),
+				start: Pos{},
+				end:   Pos{},
+			})
+		}
 		return c.compileSelectorExpr(expr)
 	default:
 		panic("unreachable")

@@ -1,14 +1,14 @@
 package main
 
-use "strings"
+use "strings" as strs
 use "io"
 
 fun i32 main() {
-    var strings.StrBuilder* strBuilder = &strings.StrBuilder{s:"dddd"}
+    var strs.StrBuilder* strBuilder = &strs.StrBuilder{s:"dddd"}
     strBuilder.s = "x"
-    strings.doSomething(strBuilder)
-    io.test(strBuilder)
-    println(strBuilder.s)
+    strs.doSomething(strBuilder)
+    var strs.StrBuilder* s = io.test(strBuilder)
+    println(strs.CONST_EXAMPLE_1)
     return 0
 }
 

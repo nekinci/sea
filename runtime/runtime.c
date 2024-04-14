@@ -340,14 +340,14 @@ slice __get_argv_slice__(int argc, char** argv) {
 }
 
 // __init__()
-extern void __main____init__();
+extern void ____INIT____();
 void init() {
-    __main____init__();
+    ____INIT____();
 }
 
 // __main()__
 extern int __main__(int argc, slice argv);
 int main(int argc, char** argv) {
-    __main____init__();
+    init();
     return __main__(argc, __get_argv_slice__(argc, argv));
 }

@@ -109,6 +109,8 @@ type VarDef struct {
 	Type     string
 	IsGlobal bool
 	IsConst  bool
+	Package  string
+	External bool
 }
 
 func (v *VarDef) IsPackage() bool { return false }
@@ -184,21 +186,21 @@ func (c *Checker) EnterScope() *Scope {
 }
 
 func (c *Checker) enterPackageScope(name string) *Scope {
+	c.tmpScope = c.Scope
 	if c.packageScopes[name] == nil {
 		c.packageScopes[name] = c.EnterScope()
 	}
-	c.tmpScope = c.Scope
 	c.Scope = c.packageScopes[name]
 	return c.packageScopes[name]
 }
 
 func (c *Checker) enterTypeScope(name string) *Scope {
+	c.tmpScope = c.Scope
 	if c.typeScopes[name] == nil {
 		c.typeScopes[name] = c.EnterScope()
 	}
 	sym := c.LookupSym(name)
 	typSym := sym.(*TypeDef)
-	c.tmpScope = c.Scope
 	c.Scope = c.typeScopes[name]
 
 	if typSym.Scope == nil {
@@ -305,7 +307,7 @@ func (c *Checker) addSymbol(name string, sym Symbol) error {
 
 	switch sym := sym.(type) {
 	case *VarDef:
-		if sym.IsGlobal {
+		if sym.IsGlobal && !sym.External {
 			c.GlobalVarDefs = append(c.GlobalVarDefs, sym)
 		}
 	case *TypeDef:
@@ -509,6 +511,7 @@ func (c *Checker) DefineVar(name string, typ string) {
 		DefNode: nil,
 		Name:    name,
 		Type:    typ,
+		Package: c.Package.Name,
 	})
 }
 
@@ -1323,6 +1326,11 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 			return unresolvedType, err
 		}
 
+		ctx := &SelectorCtx{
+			parent:    c.ctx,
+			IsPackage: false,
+		}
+		expr.Ctx = ctx
 		var ltyp = c.extractBaseType(left)
 
 		relatedSym := c.LookupSym(ltyp)
@@ -1336,6 +1344,7 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 			c.enterTypeScope(ltyp)
 			defer c.turnTempScopeBack()
 		} else {
+			ctx.IsPackage = true
 			c.enterPackageScope(ltyp)
 			defer c.turnTempScopeBack()
 		}
@@ -1491,7 +1500,7 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 			panic("unreachable")
 		}
 	case *AssignExpr:
-		c.checkConstAssign(expr)
+		c.checkConstAssign(expr.Left)
 		l, err := c.checkExpr(expr.Left)
 
 		if err != nil {
@@ -1520,7 +1529,7 @@ func (c *Checker) checkExpr(expr Expr) (string, error) {
 			return unresolvedType, fmt.Errorf("invalid assignment: expected %s, got: %s", l, r)
 		} else {
 			sym := c.LookupSym(c.extractBaseType(r))
-			if sym.IsTypeDef() {
+			if sym.IsTypeDef() || sym.IsPackage() {
 				c.setVarAssignCtxFields(ctx, l, sym.(*TypeDef))
 			}
 		}
@@ -1649,8 +1658,11 @@ func (c *Checker) restoreExternalTyp(alias, typ, packagePath string) string {
 	return strings.Replace(typ, t, fmt.Sprintf("%s.%s", alias, t), 1)
 }
 
-func (c *Checker) checkConstAssign(expr *AssignExpr) {
-	if ident, ok := expr.Left.(*IdentExpr); ok {
+func (c *Checker) checkConstAssign(expr Expr) {
+
+	switch expr := expr.(type) {
+	case *IdentExpr:
+		ident := expr
 		v := c.LookupSym(ident.Name)
 		if v != nil {
 			if v.IsVarDef() {
@@ -1663,6 +1675,18 @@ func (c *Checker) checkConstAssign(expr *AssignExpr) {
 				c.errorf(start, end, "expected identifier for assign expr")
 			}
 		}
+	case *SelectorExpr:
+		l, err := c.checkExpr(expr.Selector)
+		if err != nil {
+			return
+		}
+		sym := c.LookupSym(l)
+		if sym == nil || !sym.IsPackage() {
+			return
+		}
+		c.enterPackageScope(l)
+		c.checkConstAssign(expr.Ident)
+		c.turnTempScopeBack()
 	}
 }
 
@@ -1813,6 +1837,16 @@ func (c *Checker) checkUseStmt(stmt *UseStmt) {
 		}
 	}
 
+	for _, varDef := range module.Globals {
+		cloned := *varDef
+		sym := stmt.useCtx.Module.Scope.LookupSym(c.extractBaseType(cloned.Type))
+		if !sym.(*TypeDef).IsBuiltin {
+			cloned.Type = c.restoreExternalTyp(symName, cloned.Type, sym.(*TypeDef).PackagePath)
+		}
+		cloned.External = true
+		AssertErr(c.addSymbol(varDef.Name, &cloned))
+	}
+
 	c.turnTempScopeBack()
 	_ = c.addSymbol(symName, &UseSym{Def: stmt, Name: symName, Alias: alias, Path: joinPath, Module: module})
 
@@ -1838,8 +1872,9 @@ func (c *Checker) collectFuncSignature(stmt *FuncDefStmt, methodOf string, typSy
 	params := make([]Param, 0)
 	if methodOf != "" {
 		_ = c.addSymbol("this", &VarDef{
-			Name: "this",
-			Type: fmt.Sprintf(pointerScheme, methodOf),
+			Name:    "this",
+			Type:    fmt.Sprintf(pointerScheme, methodOf),
+			Package: c.Package.Name,
 		})
 	}
 
@@ -1894,10 +1929,12 @@ func (c *Checker) collectSignatures() {
 					panic("Not implemented")
 				}
 				err := c.addSymbol(stmt.Name.Name, &VarDef{
-					DefNode: stmt,
-					Name:    stmt.Name.Name,
-					Type:    c.getNameOfType(stmt.Type),
-					IsConst: stmt.IsConst,
+					DefNode:  stmt,
+					Name:     stmt.Name.Name,
+					Type:     c.getNameOfType(stmt.Type),
+					IsConst:  stmt.IsConst,
+					IsGlobal: true,
+					Package:  c.Package.Name,
 				})
 				AssertErr(err)
 			case *FuncDefStmt:

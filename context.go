@@ -118,3 +118,12 @@ type UseCtx struct {
 	Module *Module
 	Alias  string
 }
+
+type SelectorCtx struct {
+	parent    Ctx
+	IsPackage bool
+}
+
+func (s *SelectorCtx) parentCtx() Ctx {
+	return s.parent
+}
