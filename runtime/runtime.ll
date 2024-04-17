@@ -3,24 +3,175 @@ source_filename = "./runtime/runtime.c"
 target datalayout = "e-m:o-i64:64-i128:128-n32:64-S128"
 target triple = "arm64-apple-macosx14.0.0"
 
+%struct.error = type { %struct.string, i32 }
+%struct.string = type { i8*, i64, i64 }
 %struct.__sFILE = type { i8*, i32, i32, i16, i16, %struct.__sbuf, i32, i8*, i32 (i8*)*, i32 (i8*, i8*, i32)*, i64 (i8*, i64, i32)*, i32 (i8*, i8*, i32)*, %struct.__sbuf, %struct.__sFILEX*, i32, [3 x i8], [1 x i8], %struct.__sbuf, i32, i64 }
 %struct.__sFILEX = type opaque
 %struct.__sbuf = type { i8*, i32 }
 %struct.slice = type { i8**, i64, i64 }
-%struct.string = type { i8*, i64, i64 }
 
-@.str = private unnamed_addr constant [31 x i8] c"Null reference access error: \0A\00", align 1
-@.str.1 = private unnamed_addr constant [58 x i8] c"Index out of bound error occurred: %d, slice size is: %zu\00", align 1
-@.str.2 = private unnamed_addr constant [2 x i8] c"r\00", align 1
-@.str.3 = private unnamed_addr constant [6 x i8] c"hello\00", align 1
-@.str.4 = private unnamed_addr constant [4 x i8] c"abc\00", align 1
-@.str.5 = private unnamed_addr constant [3 x i8] c"%d\00", align 1
+@env_index = global i32 0, align 4
+@exception_index = global i32 0, align 4
+@EXCEPTION_TABLE = global [100 x %struct.error*] zeroinitializer, align 8
+@.str = private unnamed_addr constant [28 x i8] c"invalid exception index: %d\00", align 1
+@env_stack = global [100 x [48 x i32]*] zeroinitializer, align 8
+@.str.1 = private unnamed_addr constant [31 x i8] c"Null reference access error: \0A\00", align 1
+@.str.2 = private unnamed_addr constant [58 x i8] c"Index out of bound error occurred: %d, slice size is: %zu\00", align 1
+@.str.3 = private unnamed_addr constant [2 x i8] c"r\00", align 1
+@.str.4 = private unnamed_addr constant [6 x i8] c"hello\00", align 1
+@.str.5 = private unnamed_addr constant [4 x i8] c"abc\00", align 1
+@.str.6 = private unnamed_addr constant [3 x i8] c"%d\00", align 1
 @__stdoutp = external global %struct.__sFILE*, align 8
-@.str.6 = private unnamed_addr constant [4 x i8] c"%ld\00", align 1
-@.str.7 = private unnamed_addr constant [3 x i8] c"%f\00", align 1
-@.str.8 = private unnamed_addr constant [2 x i8] c"\0A\00", align 1
-@.str.9 = private unnamed_addr constant [6 x i8] c"false\00", align 1
-@.str.10 = private unnamed_addr constant [5 x i8] c"true\00", align 1
+@.str.7 = private unnamed_addr constant [4 x i8] c"%ld\00", align 1
+@.str.8 = private unnamed_addr constant [3 x i8] c"%f\00", align 1
+@.str.9 = private unnamed_addr constant [2 x i8] c"\0A\00", align 1
+@.str.10 = private unnamed_addr constant [6 x i8] c"false\00", align 1
+@.str.11 = private unnamed_addr constant [5 x i8] c"true\00", align 1
+@.str.12 = private unnamed_addr constant [22 x i8] c"Runtime exception: %d\00", align 1
+@.str.13 = private unnamed_addr constant [35 x i8] c"Error code: %d, Error message: %s\0A\00", align 1
+
+; Function Attrs: noinline nounwind optnone ssp uwtable
+define void @____add__exception____(%struct.error* noundef %0) #0 {
+  %2 = alloca %struct.error*, align 8
+  store %struct.error* %0, %struct.error** %2, align 8
+  %3 = load %struct.error*, %struct.error** %2, align 8
+  %4 = load i32, i32* @exception_index, align 4
+  %5 = add nsw i32 %4, 1
+  store i32 %5, i32* @exception_index, align 4
+  %6 = sext i32 %4 to i64
+  %7 = getelementptr inbounds [100 x %struct.error*], [100 x %struct.error*]* @EXCEPTION_TABLE, i64 0, i64 %6
+  store %struct.error* %3, %struct.error** %7, align 8
+  ret void
+}
+
+; Function Attrs: noinline nounwind optnone ssp uwtable
+define %struct.error* @____get__last__exception__instance____() #0 {
+  %1 = alloca %struct.error*, align 8
+  %2 = load i32, i32* @exception_index, align 4
+  %3 = icmp sle i32 %2, 0
+  br i1 %3, label %4, label %7
+
+4:                                                ; preds = %0
+  %5 = load i32, i32* @exception_index, align 4
+  %6 = call i32 (i8*, ...) @printf(i8* noundef getelementptr inbounds ([28 x i8], [28 x i8]* @.str, i64 0, i64 0), i32 noundef %5)
+  call void @exit(i32 noundef 14) #11
+  unreachable
+
+7:                                                ; preds = %0
+  %8 = load i32, i32* @exception_index, align 4
+  %9 = sub nsw i32 %8, 1
+  %10 = sext i32 %9 to i64
+  %11 = getelementptr inbounds [100 x %struct.error*], [100 x %struct.error*]* @EXCEPTION_TABLE, i64 0, i64 %10
+  %12 = load %struct.error*, %struct.error** %11, align 8
+  store %struct.error* %12, %struct.error** %1, align 8
+  %13 = load i32, i32* @exception_index, align 4
+  %14 = sub nsw i32 %13, 1
+  store i32 %14, i32* @exception_index, align 4
+  %15 = load %struct.error*, %struct.error** %1, align 8
+  ret %struct.error* %15
+}
+
+declare i32 @printf(i8* noundef, ...) #1
+
+; Function Attrs: noreturn
+declare void @exit(i32 noundef) #2
+
+; Function Attrs: noinline nounwind optnone ssp uwtable
+define void @____pop__exception__instance____() #0 {
+  %1 = alloca i32, align 4
+  %2 = load i32, i32* @exception_index, align 4
+  %3 = icmp sgt i32 %2, 0
+  br i1 %3, label %4, label %14
+
+4:                                                ; preds = %0
+  %5 = load i32, i32* @exception_index, align 4
+  %6 = sub nsw i32 %5, 1
+  store i32 %6, i32* %1, align 4
+  %7 = load i32, i32* %1, align 4
+  %8 = sext i32 %7 to i64
+  %9 = getelementptr inbounds [100 x %struct.error*], [100 x %struct.error*]* @EXCEPTION_TABLE, i64 0, i64 %8
+  %10 = load %struct.error*, %struct.error** %9, align 8
+  %11 = bitcast %struct.error* %10 to i8*
+  call void @free(i8* noundef %11)
+  %12 = load i32, i32* @exception_index, align 4
+  %13 = add nsw i32 %12, -1
+  store i32 %13, i32* @exception_index, align 4
+  br label %14
+
+14:                                               ; preds = %4, %0
+  ret void
+}
+
+declare void @free(i8* noundef) #1
+
+; Function Attrs: noinline nounwind optnone ssp uwtable
+define [48 x i32]* @____push_new_exception_env____() #0 {
+  %1 = alloca [48 x i32]*, align 8
+  %2 = call i8* @malloc(i64 noundef 192) #12
+  %3 = bitcast i8* %2 to [48 x i32]*
+  store [48 x i32]* %3, [48 x i32]** %1, align 8
+  %4 = load [48 x i32]*, [48 x i32]** %1, align 8
+  %5 = load i32, i32* @env_index, align 4
+  %6 = sext i32 %5 to i64
+  %7 = getelementptr inbounds [100 x [48 x i32]*], [100 x [48 x i32]*]* @env_stack, i64 0, i64 %6
+  store [48 x i32]* %4, [48 x i32]** %7, align 8
+  %8 = load i32, i32* @env_index, align 4
+  %9 = add nsw i32 %8, 1
+  store i32 %9, i32* @env_index, align 4
+  %10 = load [48 x i32]*, [48 x i32]** %1, align 8
+  ret [48 x i32]* %10
+}
+
+; Function Attrs: allocsize(0)
+declare i8* @malloc(i64 noundef) #3
+
+; Function Attrs: noinline nounwind optnone ssp uwtable
+define [48 x i32]* @____get_last_exception_env____() #0 {
+  %1 = load i32, i32* @env_index, align 4
+  %2 = sub nsw i32 %1, 1
+  %3 = sext i32 %2 to i64
+  %4 = getelementptr inbounds [100 x [48 x i32]*], [100 x [48 x i32]*]* @env_stack, i64 0, i64 %3
+  %5 = load [48 x i32]*, [48 x i32]** %4, align 8
+  ret [48 x i32]* %5
+}
+
+; Function Attrs: noinline nounwind optnone ssp uwtable
+define [48 x i32]* @____pop_exception_env____() #0 {
+  %1 = alloca [48 x i32]*, align 8
+  %2 = alloca [48 x i32]*, align 8
+  %3 = load i32, i32* @env_index, align 4
+  %4 = icmp eq i32 %3, 0
+  br i1 %4, label %5, label %10
+
+5:                                                ; preds = %0
+  %6 = load i32, i32* @env_index, align 4
+  %7 = sext i32 %6 to i64
+  %8 = getelementptr inbounds [100 x [48 x i32]*], [100 x [48 x i32]*]* @env_stack, i64 0, i64 %7
+  %9 = load [48 x i32]*, [48 x i32]** %8, align 8
+  store [48 x i32]* %9, [48 x i32]** %1, align 8
+  br label %21
+
+10:                                               ; preds = %0
+  %11 = load i32, i32* @env_index, align 4
+  %12 = sub nsw i32 %11, 1
+  store i32 %12, i32* @env_index, align 4
+  %13 = load i32, i32* @env_index, align 4
+  %14 = sext i32 %13 to i64
+  %15 = getelementptr inbounds [100 x [48 x i32]*], [100 x [48 x i32]*]* @env_stack, i64 0, i64 %14
+  %16 = load [48 x i32]*, [48 x i32]** %15, align 8
+  store [48 x i32]* %16, [48 x i32]** %2, align 8
+  %17 = load i32, i32* @env_index, align 4
+  %18 = sext i32 %17 to i64
+  %19 = getelementptr inbounds [100 x [48 x i32]*], [100 x [48 x i32]*]* @env_stack, i64 0, i64 %18
+  store [48 x i32]* null, [48 x i32]** %19, align 8
+  %20 = load [48 x i32]*, [48 x i32]** %2, align 8
+  store [48 x i32]* %20, [48 x i32]** %1, align 8
+  br label %21
+
+21:                                               ; preds = %10, %5
+  %22 = load [48 x i32]*, [48 x i32]** %1, align 8
+  ret [48 x i32]* %22
+}
 
 ; Function Attrs: noinline nounwind optnone ssp uwtable
 define void @make_slice(%struct.slice* noalias sret(%struct.slice) align 8 %0) #0 {
@@ -31,15 +182,12 @@ define void @make_slice(%struct.slice* noalias sret(%struct.slice) align 8 %0) #
   %4 = getelementptr inbounds %struct.slice, %struct.slice* %0, i32 0, i32 2
   %5 = load i64, i64* %4, align 8
   %6 = mul i64 8, %5
-  %7 = call i8* @malloc(i64 noundef %6) #10
+  %7 = call i8* @malloc(i64 noundef %6) #12
   %8 = bitcast i8* %7 to i8**
   %9 = getelementptr inbounds %struct.slice, %struct.slice* %0, i32 0, i32 0
   store i8** %8, i8*** %9, align 8
   ret void
 }
-
-; Function Attrs: allocsize(0)
-declare i8* @malloc(i64 noundef) #1
 
 ; Function Attrs: noinline nounwind optnone ssp uwtable
 define void @append_slice_data(%struct.slice* noundef %0, i8* noundef %1) #0 {
@@ -52,7 +200,7 @@ define void @append_slice_data(%struct.slice* noundef %0, i8* noundef %1) #0 {
   br i1 %6, label %7, label %9
 
 7:                                                ; preds = %2
-  %8 = call i32 (i8*, ...) @printf(i8* noundef getelementptr inbounds ([31 x i8], [31 x i8]* @.str, i64 0, i64 0))
+  %8 = call i32 (i8*, ...) @printf(i8* noundef getelementptr inbounds ([31 x i8], [31 x i8]* @.str.1, i64 0, i64 0))
   call void @exit(i32 noundef 1) #11
   unreachable
 
@@ -82,7 +230,7 @@ define void @append_slice_data(%struct.slice* noundef %0, i8* noundef %1) #0 {
   %29 = getelementptr inbounds %struct.slice, %struct.slice* %28, i32 0, i32 2
   %30 = load i64, i64* %29, align 8
   %31 = mul i64 8, %30
-  %32 = call i8* @realloc(i8* noundef %27, i64 noundef %31) #12
+  %32 = call i8* @realloc(i8* noundef %27, i64 noundef %31) #13
   %33 = bitcast i8* %32 to i8**
   %34 = load %struct.slice*, %struct.slice** %3, align 8
   %35 = getelementptr inbounds %struct.slice, %struct.slice* %34, i32 0, i32 0
@@ -107,11 +255,6 @@ define void @append_slice_data(%struct.slice* noundef %0, i8* noundef %1) #0 {
   ret void
 }
 
-declare i32 @printf(i8* noundef, ...) #2
-
-; Function Attrs: noreturn
-declare void @exit(i32 noundef) #3
-
 ; Function Attrs: allocsize(1)
 declare i8* @realloc(i8* noundef, i64 noundef) #4
 
@@ -126,7 +269,7 @@ define void @append_slice_datap(%struct.slice* noundef %0, i8** noundef %1) #0 {
   br i1 %6, label %7, label %9
 
 7:                                                ; preds = %2
-  %8 = call i32 (i8*, ...) @printf(i8* noundef getelementptr inbounds ([31 x i8], [31 x i8]* @.str, i64 0, i64 0))
+  %8 = call i32 (i8*, ...) @printf(i8* noundef getelementptr inbounds ([31 x i8], [31 x i8]* @.str.1, i64 0, i64 0))
   call void @exit(i32 noundef 1) #11
   unreachable
 
@@ -156,7 +299,7 @@ define void @append_slice_datap(%struct.slice* noundef %0, i8** noundef %1) #0 {
   %29 = getelementptr inbounds %struct.slice, %struct.slice* %28, i32 0, i32 2
   %30 = load i64, i64* %29, align 8
   %31 = mul i64 8, %30
-  %32 = call i8* @realloc(i8* noundef %27, i64 noundef %31) #12
+  %32 = call i8* @realloc(i8* noundef %27, i64 noundef %31) #13
   %33 = bitcast i8* %32 to i8**
   %34 = load %struct.slice*, %struct.slice** %3, align 8
   %35 = getelementptr inbounds %struct.slice, %struct.slice* %34, i32 0, i32 0
@@ -205,7 +348,7 @@ define i8* @access_slice_data(%struct.slice* noundef %0, i32 noundef %1) #0 {
   %11 = load i32, i32* %3, align 4
   %12 = getelementptr inbounds %struct.slice, %struct.slice* %0, i32 0, i32 1
   %13 = load i64, i64* %12, align 8
-  %14 = call i32 (i8*, ...) @printf(i8* noundef getelementptr inbounds ([58 x i8], [58 x i8]* @.str.1, i64 0, i64 0), i32 noundef %11, i64 noundef %13)
+  %14 = call i32 (i8*, ...) @printf(i8* noundef getelementptr inbounds ([58 x i8], [58 x i8]* @.str.2, i64 0, i64 0), i32 noundef %11, i64 noundef %13)
   call void @exit(i32 noundef 255) #11
   unreachable
 
@@ -238,7 +381,7 @@ define i8* @access_slice_datap(%struct.slice* noundef %0, i32 noundef %1) #0 {
   %12 = load i32, i32* %3, align 4
   %13 = getelementptr inbounds %struct.slice, %struct.slice* %0, i32 0, i32 1
   %14 = load i64, i64* %13, align 8
-  %15 = call i32 (i8*, ...) @printf(i8* noundef getelementptr inbounds ([58 x i8], [58 x i8]* @.str.1, i64 0, i64 0), i32 noundef %12, i64 noundef %14)
+  %15 = call i32 (i8*, ...) @printf(i8* noundef getelementptr inbounds ([58 x i8], [58 x i8]* @.str.2, i64 0, i64 0), i32 noundef %12, i64 noundef %14)
   call void @exit(i32 noundef 255) #11
   unreachable
 
@@ -271,7 +414,7 @@ define i8* @memcpy_internal(i8* noundef %0, i8* noundef %1, i64 noundef %2) #0 {
   %9 = load i64, i64* %6, align 8
   %10 = load i8*, i8** %4, align 8
   %11 = call i64 @llvm.objectsize.i64.p0i8(i8* %10, i1 false, i1 true, i1 false)
-  %12 = call i8* @__memcpy_chk(i8* noundef %7, i8* noundef %8, i64 noundef %9, i64 noundef %11) #13
+  %12 = call i8* @__memcpy_chk(i8* noundef %7, i8* noundef %8, i64 noundef %9, i64 noundef %11) #14
   ret i8* %12
 }
 
@@ -300,7 +443,7 @@ define void @make_string(%struct.string* noalias sret(%struct.string) align 8 %0
   ret void
 }
 
-declare i64 @strlen(i8* noundef) #2
+declare i64 @strlen(i8* noundef) #1
 
 ; Function Attrs: noinline nounwind optnone ssp uwtable
 define i32 @printf_internal(i8* noundef %0, ...) #0 {
@@ -323,7 +466,7 @@ define i32 @printf_internal(i8* noundef %0, ...) #0 {
 ; Function Attrs: nofree nosync nounwind willreturn
 declare void @llvm.va_start(i8*) #7
 
-declare i32 @vprintf(i8* noundef, i8* noundef) #2
+declare i32 @vprintf(i8* noundef, i8* noundef) #1
 
 ; Function Attrs: nofree nosync nounwind willreturn
 declare void @llvm.va_end(i8*) #7
@@ -345,14 +488,14 @@ define i32 @scanf_internal(%struct.string* noundef %0, ...) #0 {
   ret i32 %10
 }
 
-declare i32 @vscanf(i8* noundef, i8* noundef) #2
+declare i32 @vscanf(i8* noundef, i8* noundef) #1
 
 ; Function Attrs: noinline nounwind optnone ssp uwtable
 define i8* @malloc_internal(i64 noundef %0) #0 {
   %2 = alloca i64, align 8
   store i64 %0, i64* %2, align 8
   %3 = load i64, i64* %2, align 8
-  %4 = call i8* @malloc(i64 noundef %3) #10
+  %4 = call i8* @malloc(i64 noundef %3) #12
   ret i8* %4
 }
 
@@ -382,7 +525,7 @@ define void @cstr_append(%struct.string* noalias sret(%struct.string) align 8 %0
   %14 = load i32*, i32** %6, align 8
   %15 = load i32, i32* %14, align 4
   %16 = sext i32 %15 to i64
-  %17 = call i8* @realloc(i8* noundef %13, i64 noundef %16) #12
+  %17 = call i8* @realloc(i8* noundef %13, i64 noundef %16) #13
   %18 = getelementptr inbounds %struct.string, %struct.string* %1, i32 0, i32 0
   store i8* %17, i8** %18, align 8
   br label %19
@@ -407,7 +550,7 @@ define void @cstr_append(%struct.string* noalias sret(%struct.string) align 8 %0
   %33 = load i32*, i32** %6, align 8
   %34 = load i32, i32* %33, align 4
   %35 = sext i32 %34 to i64
-  %36 = call i8* @realloc(i8* noundef %32, i64 noundef %35) #12
+  %36 = call i8* @realloc(i8* noundef %32, i64 noundef %35) #13
   %37 = getelementptr inbounds %struct.string, %struct.string* %1, i32 0, i32 0
   store i8* %36, i8** %37, align 8
   br label %38
@@ -449,7 +592,7 @@ define void @open_file_read(%struct.string* noalias sret(%struct.string) align 8
   %7 = alloca %struct.string, align 8
   %8 = getelementptr inbounds %struct.string, %struct.string* %1, i32 0, i32 0
   %9 = load i8*, i8** %8, align 8
-  %10 = call %struct.__sFILE* @"\01_fopen"(i8* noundef %9, i8* noundef getelementptr inbounds ([2 x i8], [2 x i8]* @.str.2, i64 0, i64 0))
+  %10 = call %struct.__sFILE* @"\01_fopen"(i8* noundef %9, i8* noundef getelementptr inbounds ([2 x i8], [2 x i8]* @.str.3, i64 0, i64 0))
   store %struct.__sFILE* %10, %struct.__sFILE** %3, align 8
   %11 = bitcast %struct.string* %0 to i8*
   call void @llvm.memset.p0i8.i64(i8* align 8 %11, i8 0, i64 24, i1 false)
@@ -484,14 +627,14 @@ define void @open_file_read(%struct.string* noalias sret(%struct.string) align 8
   ret void
 }
 
-declare %struct.__sFILE* @"\01_fopen"(i8* noundef, i8* noundef) #2
+declare %struct.__sFILE* @"\01_fopen"(i8* noundef, i8* noundef) #1
 
 ; Function Attrs: argmemonly nofree nounwind willreturn writeonly
 declare void @llvm.memset.p0i8.i64(i8* nocapture writeonly, i8, i64, i1 immarg) #9
 
-declare i32 @fgetc(%struct.__sFILE* noundef) #2
+declare i32 @fgetc(%struct.__sFILE* noundef) #1
 
-declare i32 @feof(%struct.__sFILE* noundef) #2
+declare i32 @feof(%struct.__sFILE* noundef) #1
 
 ; Function Attrs: noinline nounwind optnone ssp uwtable
 define void @add(%struct.string* noalias sret(%struct.string) align 8 %0, i32 noundef %1) #0 {
@@ -503,7 +646,7 @@ define void @add(%struct.string* noalias sret(%struct.string) align 8 %0, i32 no
 
 6:                                                ; preds = %2
   %7 = getelementptr inbounds %struct.string, %struct.string* %0, i32 0, i32 0
-  store i8* getelementptr inbounds ([6 x i8], [6 x i8]* @.str.3, i64 0, i64 0), i8** %7, align 8
+  store i8* getelementptr inbounds ([6 x i8], [6 x i8]* @.str.4, i64 0, i64 0), i8** %7, align 8
   %8 = getelementptr inbounds %struct.string, %struct.string* %0, i32 0, i32 1
   store i64 0, i64* %8, align 8
   %9 = getelementptr inbounds %struct.string, %struct.string* %0, i32 0, i32 2
@@ -512,7 +655,7 @@ define void @add(%struct.string* noalias sret(%struct.string) align 8 %0, i32 no
 
 10:                                               ; preds = %2
   %11 = getelementptr inbounds %struct.string, %struct.string* %0, i32 0, i32 0
-  store i8* getelementptr inbounds ([4 x i8], [4 x i8]* @.str.4, i64 0, i64 0), i8** %11, align 8
+  store i8* getelementptr inbounds ([4 x i8], [4 x i8]* @.str.5, i64 0, i64 0), i8** %11, align 8
   %12 = getelementptr inbounds %struct.string, %struct.string* %0, i32 0, i32 1
   store i64 0, i64* %12, align 8
   %13 = getelementptr inbounds %struct.string, %struct.string* %0, i32 0, i32 2
@@ -528,7 +671,7 @@ define void @puts_int(i32 noundef %0) #0 {
   %2 = alloca i32, align 4
   store i32 %0, i32* %2, align 4
   %3 = load i32, i32* %2, align 4
-  %4 = call i32 (i8*, ...) @printf(i8* noundef getelementptr inbounds ([3 x i8], [3 x i8]* @.str.5, i64 0, i64 0), i32 noundef %3)
+  %4 = call i32 (i8*, ...) @printf(i8* noundef getelementptr inbounds ([3 x i8], [3 x i8]* @.str.6, i64 0, i64 0), i32 noundef %3)
   ret void
 }
 
@@ -541,7 +684,7 @@ define i32 @puts_str(%struct.string* noundef %0) #0 {
   ret i32 %5
 }
 
-declare i32 @"\01_fputs"(i8* noundef, %struct.__sFILE* noundef) #2
+declare i32 @"\01_fputs"(i8* noundef, %struct.__sFILE* noundef) #1
 
 ; Function Attrs: noinline nounwind optnone ssp uwtable
 define i8* @to_char_pointer(%struct.string* noundef %0) #0 {
@@ -583,7 +726,7 @@ define i32 @compare_string(%struct.string* noundef %0, %struct.string* noundef %
   ret i32 %21
 }
 
-declare i32 @strcmp(i8* noundef, i8* noundef) #2
+declare i32 @strcmp(i8* noundef, i8* noundef) #1
 
 ; Function Attrs: noinline nounwind optnone ssp uwtable
 define void @concat_strings(%struct.string* noalias sret(%struct.string) align 8 %0, %struct.string* noundef %1, %struct.string* noundef %2) #0 {
@@ -600,7 +743,7 @@ define void @concat_strings(%struct.string* noalias sret(%struct.string) align 8
   store i64 %11, i64* %12, align 8
   %13 = load i64, i64* %4, align 8
   %14 = mul i64 1, %13
-  %15 = call i8* @malloc(i64 noundef %14) #10
+  %15 = call i8* @malloc(i64 noundef %14) #12
   store i8* %15, i8** %5, align 8
   %16 = load i8*, i8** %5, align 8
   %17 = getelementptr inbounds %struct.string, %struct.string* %1, i32 0, i32 0
@@ -609,7 +752,7 @@ define void @concat_strings(%struct.string* noalias sret(%struct.string) align 8
   %20 = load i64, i64* %19, align 8
   %21 = load i8*, i8** %5, align 8
   %22 = call i64 @llvm.objectsize.i64.p0i8(i8* %21, i1 false, i1 true, i1 false)
-  %23 = call i8* @__memcpy_chk(i8* noundef %16, i8* noundef %18, i64 noundef %20, i64 noundef %22) #13
+  %23 = call i8* @__memcpy_chk(i8* noundef %16, i8* noundef %18, i64 noundef %20, i64 noundef %22) #14
   %24 = load i8*, i8** %5, align 8
   %25 = getelementptr inbounds %struct.string, %struct.string* %1, i32 0, i32 1
   %26 = load i64, i64* %25, align 8
@@ -623,7 +766,7 @@ define void @concat_strings(%struct.string* noalias sret(%struct.string) align 8
   %34 = load i64, i64* %33, align 8
   %35 = getelementptr inbounds i8, i8* %32, i64 %34
   %36 = call i64 @llvm.objectsize.i64.p0i8(i8* %35, i1 false, i1 true, i1 false)
-  %37 = call i8* @__memcpy_chk(i8* noundef %27, i8* noundef %29, i64 noundef %31, i64 noundef %36) #13
+  %37 = call i8* @__memcpy_chk(i8* noundef %27, i8* noundef %29, i64 noundef %31, i64 noundef %36) #14
   %38 = load i8*, i8** %5, align 8
   %39 = getelementptr inbounds %struct.string, %struct.string* %0, i32 0, i32 0
   store i8* %38, i8** %39, align 8
@@ -640,7 +783,7 @@ define void @concat_char_and_string(%struct.string* noalias sret(%struct.string)
   %7 = alloca %struct.string, align 8
   %8 = alloca %struct.string, align 8
   store i8 %1, i8* %4, align 1
-  %9 = call i8* @malloc(i64 noundef 1) #10
+  %9 = call i8* @malloc(i64 noundef 1) #12
   store i8* %9, i8** %5, align 8
   %10 = load i8, i8* %4, align 1
   %11 = load i8*, i8** %5, align 8
@@ -665,7 +808,7 @@ define void @concat_string_and_char(%struct.string* noalias sret(%struct.string)
   %7 = alloca %struct.string, align 8
   %8 = alloca %struct.string, align 8
   store i8 %2, i8* %4, align 1
-  %9 = call i8* @malloc(i64 noundef 1) #10
+  %9 = call i8* @malloc(i64 noundef 1) #12
   store i8* %9, i8** %5, align 8
   %10 = load i8, i8* %4, align 1
   %11 = load i8*, i8** %5, align 8
@@ -692,12 +835,12 @@ define void @concat_char_and_char(%struct.string* noalias sret(%struct.string) a
   %9 = alloca %struct.string, align 8
   store i8 %1, i8* %4, align 1
   store i8 %2, i8* %5, align 1
-  %10 = call i8* @malloc(i64 noundef 1) #10
+  %10 = call i8* @malloc(i64 noundef 1) #12
   store i8* %10, i8** %6, align 8
   %11 = load i8, i8* %4, align 1
   %12 = load i8*, i8** %6, align 8
   store i8 %11, i8* %12, align 1
-  %13 = call i8* @malloc(i64 noundef 1) #10
+  %13 = call i8* @malloc(i64 noundef 1) #12
   store i8* %13, i8** %7, align 8
   %14 = load i8, i8* %5, align 1
   %15 = load i8*, i8** %7, align 8
@@ -747,7 +890,7 @@ define void @__print_char__(i8 noundef signext %0) #0 {
   ret void
 }
 
-declare i32 @fputc(i32 noundef, %struct.__sFILE* noundef) #2
+declare i32 @fputc(i32 noundef, %struct.__sFILE* noundef) #1
 
 ; Function Attrs: noinline nounwind optnone ssp uwtable
 define void @__print_i8__(i16 noundef signext %0) #0 {
@@ -755,7 +898,7 @@ define void @__print_i8__(i16 noundef signext %0) #0 {
   store i16 %0, i16* %2, align 2
   %3 = load i16, i16* %2, align 2
   %4 = sext i16 %3 to i32
-  %5 = call i32 (i8*, ...) @printf(i8* noundef getelementptr inbounds ([3 x i8], [3 x i8]* @.str.5, i64 0, i64 0), i32 noundef %4)
+  %5 = call i32 (i8*, ...) @printf(i8* noundef getelementptr inbounds ([3 x i8], [3 x i8]* @.str.6, i64 0, i64 0), i32 noundef %4)
   ret void
 }
 
@@ -764,7 +907,7 @@ define void @__print_i16__(i32 noundef %0) #0 {
   %2 = alloca i32, align 4
   store i32 %0, i32* %2, align 4
   %3 = load i32, i32* %2, align 4
-  %4 = call i32 (i8*, ...) @printf(i8* noundef getelementptr inbounds ([3 x i8], [3 x i8]* @.str.5, i64 0, i64 0), i32 noundef %3)
+  %4 = call i32 (i8*, ...) @printf(i8* noundef getelementptr inbounds ([3 x i8], [3 x i8]* @.str.6, i64 0, i64 0), i32 noundef %3)
   ret void
 }
 
@@ -773,7 +916,7 @@ define void @__print_i32__(i32 noundef %0) #0 {
   %2 = alloca i32, align 4
   store i32 %0, i32* %2, align 4
   %3 = load i32, i32* %2, align 4
-  %4 = call i32 (i8*, ...) @printf(i8* noundef getelementptr inbounds ([3 x i8], [3 x i8]* @.str.5, i64 0, i64 0), i32 noundef %3)
+  %4 = call i32 (i8*, ...) @printf(i8* noundef getelementptr inbounds ([3 x i8], [3 x i8]* @.str.6, i64 0, i64 0), i32 noundef %3)
   ret void
 }
 
@@ -782,7 +925,7 @@ define void @__print_i64__(i64 noundef %0) #0 {
   %2 = alloca i64, align 8
   store i64 %0, i64* %2, align 8
   %3 = load i64, i64* %2, align 8
-  %4 = call i32 (i8*, ...) @printf(i8* noundef getelementptr inbounds ([4 x i8], [4 x i8]* @.str.6, i64 0, i64 0), i64 noundef %3)
+  %4 = call i32 (i8*, ...) @printf(i8* noundef getelementptr inbounds ([4 x i8], [4 x i8]* @.str.7, i64 0, i64 0), i64 noundef %3)
   ret void
 }
 
@@ -792,7 +935,7 @@ define void @__print_f16__(float noundef %0) #0 {
   store float %0, float* %2, align 4
   %3 = load float, float* %2, align 4
   %4 = fpext float %3 to double
-  %5 = call i32 (i8*, ...) @printf(i8* noundef getelementptr inbounds ([3 x i8], [3 x i8]* @.str.7, i64 0, i64 0), double noundef %4)
+  %5 = call i32 (i8*, ...) @printf(i8* noundef getelementptr inbounds ([3 x i8], [3 x i8]* @.str.8, i64 0, i64 0), double noundef %4)
   ret void
 }
 
@@ -802,7 +945,7 @@ define void @__print_f32__(float noundef %0) #0 {
   store float %0, float* %2, align 4
   %3 = load float, float* %2, align 4
   %4 = fpext float %3 to double
-  %5 = call i32 (i8*, ...) @printf(i8* noundef getelementptr inbounds ([3 x i8], [3 x i8]* @.str.7, i64 0, i64 0), double noundef %4)
+  %5 = call i32 (i8*, ...) @printf(i8* noundef getelementptr inbounds ([3 x i8], [3 x i8]* @.str.8, i64 0, i64 0), double noundef %4)
   ret void
 }
 
@@ -811,7 +954,7 @@ define void @__print_f64__(double noundef %0) #0 {
   %2 = alloca double, align 8
   store double %0, double* %2, align 8
   %3 = load double, double* %2, align 8
-  %4 = call i32 (i8*, ...) @printf(i8* noundef getelementptr inbounds ([3 x i8], [3 x i8]* @.str.7, i64 0, i64 0), double noundef %3)
+  %4 = call i32 (i8*, ...) @printf(i8* noundef getelementptr inbounds ([3 x i8], [3 x i8]* @.str.8, i64 0, i64 0), double noundef %3)
   ret void
 }
 
@@ -828,7 +971,7 @@ define void @__print_charp__(i8* noundef %0) #0 {
 ; Function Attrs: noinline nounwind optnone ssp uwtable
 define void @__print_ln__() #0 {
   %1 = load %struct.__sFILE*, %struct.__sFILE** @__stdoutp, align 8
-  %2 = call i32 @"\01_fputs"(i8* noundef getelementptr inbounds ([2 x i8], [2 x i8]* @.str.8, i64 0, i64 0), %struct.__sFILE* noundef %1)
+  %2 = call i32 @"\01_fputs"(i8* noundef getelementptr inbounds ([2 x i8], [2 x i8]* @.str.9, i64 0, i64 0), %struct.__sFILE* noundef %1)
   ret void
 }
 
@@ -842,12 +985,12 @@ define void @__print__bool__(i32 noundef %0) #0 {
 
 5:                                                ; preds = %1
   %6 = load %struct.__sFILE*, %struct.__sFILE** @__stdoutp, align 8
-  %7 = call i32 @"\01_fputs"(i8* noundef getelementptr inbounds ([6 x i8], [6 x i8]* @.str.9, i64 0, i64 0), %struct.__sFILE* noundef %6)
+  %7 = call i32 @"\01_fputs"(i8* noundef getelementptr inbounds ([6 x i8], [6 x i8]* @.str.10, i64 0, i64 0), %struct.__sFILE* noundef %6)
   br label %11
 
 8:                                                ; preds = %1
   %9 = load %struct.__sFILE*, %struct.__sFILE** @__stdoutp, align 8
-  %10 = call i32 @"\01_fputs"(i8* noundef getelementptr inbounds ([5 x i8], [5 x i8]* @.str.10, i64 0, i64 0), %struct.__sFILE* noundef %9)
+  %10 = call i32 @"\01_fputs"(i8* noundef getelementptr inbounds ([5 x i8], [5 x i8]* @.str.11, i64 0, i64 0), %struct.__sFILE* noundef %9)
   br label %11
 
 11:                                               ; preds = %8, %5
@@ -863,12 +1006,12 @@ define void @__float_to_string__(%struct.string* noalias sret(%struct.string) al
   %6 = call i64 @llvm.objectsize.i64.p0i8(i8* null, i1 false, i1 true, i1 false)
   %7 = load float, float* %3, align 4
   %8 = fpext float %7 to double
-  %9 = call i32 (i8*, i64, i32, i64, i8*, ...) @__snprintf_chk(i8* noundef null, i64 noundef 0, i32 noundef 0, i64 noundef %6, i8* noundef getelementptr inbounds ([3 x i8], [3 x i8]* @.str.7, i64 0, i64 0), double noundef %8)
+  %9 = call i32 (i8*, i64, i32, i64, i8*, ...) @__snprintf_chk(i8* noundef null, i64 noundef 0, i32 noundef 0, i64 noundef %6, i8* noundef getelementptr inbounds ([3 x i8], [3 x i8]* @.str.8, i64 0, i64 0), double noundef %8)
   store i32 %9, i32* %4, align 4
   %10 = load i32, i32* %4, align 4
   %11 = add nsw i32 %10, 1
   %12 = sext i32 %11 to i64
-  %13 = call i8* @malloc(i64 noundef %12) #10
+  %13 = call i8* @malloc(i64 noundef %12) #12
   store i8* %13, i8** %5, align 8
   %14 = load i8*, i8** %5, align 8
   %15 = load i32, i32* %4, align 4
@@ -878,13 +1021,13 @@ define void @__float_to_string__(%struct.string* noalias sret(%struct.string) al
   %19 = call i64 @llvm.objectsize.i64.p0i8(i8* %18, i1 false, i1 true, i1 false)
   %20 = load float, float* %3, align 4
   %21 = fpext float %20 to double
-  %22 = call i32 (i8*, i64, i32, i64, i8*, ...) @__snprintf_chk(i8* noundef %14, i64 noundef %17, i32 noundef 0, i64 noundef %19, i8* noundef getelementptr inbounds ([3 x i8], [3 x i8]* @.str.7, i64 0, i64 0), double noundef %21)
+  %22 = call i32 (i8*, i64, i32, i64, i8*, ...) @__snprintf_chk(i8* noundef %14, i64 noundef %17, i32 noundef 0, i64 noundef %19, i8* noundef getelementptr inbounds ([3 x i8], [3 x i8]* @.str.8, i64 0, i64 0), double noundef %21)
   %23 = load i8*, i8** %5, align 8
   call void @make_string(%struct.string* sret(%struct.string) align 8 %0, i8* noundef %23)
   ret void
 }
 
-declare i32 @__snprintf_chk(i8* noundef, i64 noundef, i32 noundef, i64 noundef, i8* noundef, ...) #2
+declare i32 @__snprintf_chk(i8* noundef, i64 noundef, i32 noundef, i64 noundef, i8* noundef, ...) #1
 
 ; Function Attrs: noinline nounwind optnone ssp uwtable
 define void @__double_to_string__(%struct.string* noalias sret(%struct.string) align 8 %0, double noundef %1) #0 {
@@ -894,12 +1037,12 @@ define void @__double_to_string__(%struct.string* noalias sret(%struct.string) a
   store double %1, double* %3, align 8
   %6 = call i64 @llvm.objectsize.i64.p0i8(i8* null, i1 false, i1 true, i1 false)
   %7 = load double, double* %3, align 8
-  %8 = call i32 (i8*, i64, i32, i64, i8*, ...) @__snprintf_chk(i8* noundef null, i64 noundef 0, i32 noundef 0, i64 noundef %6, i8* noundef getelementptr inbounds ([3 x i8], [3 x i8]* @.str.7, i64 0, i64 0), double noundef %7)
+  %8 = call i32 (i8*, i64, i32, i64, i8*, ...) @__snprintf_chk(i8* noundef null, i64 noundef 0, i32 noundef 0, i64 noundef %6, i8* noundef getelementptr inbounds ([3 x i8], [3 x i8]* @.str.8, i64 0, i64 0), double noundef %7)
   store i32 %8, i32* %4, align 4
   %9 = load i32, i32* %4, align 4
   %10 = add nsw i32 %9, 1
   %11 = sext i32 %10 to i64
-  %12 = call i8* @malloc(i64 noundef %11) #10
+  %12 = call i8* @malloc(i64 noundef %11) #12
   store i8* %12, i8** %5, align 8
   %13 = load i8*, i8** %5, align 8
   %14 = load i32, i32* %4, align 4
@@ -908,7 +1051,7 @@ define void @__double_to_string__(%struct.string* noalias sret(%struct.string) a
   %17 = load i8*, i8** %5, align 8
   %18 = call i64 @llvm.objectsize.i64.p0i8(i8* %17, i1 false, i1 true, i1 false)
   %19 = load double, double* %3, align 8
-  %20 = call i32 (i8*, i64, i32, i64, i8*, ...) @__snprintf_chk(i8* noundef %13, i64 noundef %16, i32 noundef 0, i64 noundef %18, i8* noundef getelementptr inbounds ([3 x i8], [3 x i8]* @.str.7, i64 0, i64 0), double noundef %19)
+  %20 = call i32 (i8*, i64, i32, i64, i8*, ...) @__snprintf_chk(i8* noundef %13, i64 noundef %16, i32 noundef 0, i64 noundef %18, i8* noundef getelementptr inbounds ([3 x i8], [3 x i8]* @.str.8, i64 0, i64 0), double noundef %19)
   %21 = load i8*, i8** %5, align 8
   call void @make_string(%struct.string* sret(%struct.string) align 8 %0, i8* noundef %21)
   ret void
@@ -923,12 +1066,12 @@ define void @__i8_to_string__(%struct.string* noalias sret(%struct.string) align
   %6 = call i64 @llvm.objectsize.i64.p0i8(i8* null, i1 false, i1 true, i1 false)
   %7 = load i16, i16* %3, align 2
   %8 = sext i16 %7 to i32
-  %9 = call i32 (i8*, i64, i32, i64, i8*, ...) @__snprintf_chk(i8* noundef null, i64 noundef 0, i32 noundef 0, i64 noundef %6, i8* noundef getelementptr inbounds ([3 x i8], [3 x i8]* @.str.5, i64 0, i64 0), i32 noundef %8)
+  %9 = call i32 (i8*, i64, i32, i64, i8*, ...) @__snprintf_chk(i8* noundef null, i64 noundef 0, i32 noundef 0, i64 noundef %6, i8* noundef getelementptr inbounds ([3 x i8], [3 x i8]* @.str.6, i64 0, i64 0), i32 noundef %8)
   store i32 %9, i32* %4, align 4
   %10 = load i32, i32* %4, align 4
   %11 = add nsw i32 %10, 1
   %12 = sext i32 %11 to i64
-  %13 = call i8* @malloc(i64 noundef %12) #10
+  %13 = call i8* @malloc(i64 noundef %12) #12
   store i8* %13, i8** %5, align 8
   %14 = load i8*, i8** %5, align 8
   %15 = load i32, i32* %4, align 4
@@ -938,7 +1081,7 @@ define void @__i8_to_string__(%struct.string* noalias sret(%struct.string) align
   %19 = call i64 @llvm.objectsize.i64.p0i8(i8* %18, i1 false, i1 true, i1 false)
   %20 = load i16, i16* %3, align 2
   %21 = sext i16 %20 to i32
-  %22 = call i32 (i8*, i64, i32, i64, i8*, ...) @__snprintf_chk(i8* noundef %14, i64 noundef %17, i32 noundef 0, i64 noundef %19, i8* noundef getelementptr inbounds ([3 x i8], [3 x i8]* @.str.5, i64 0, i64 0), i32 noundef %21)
+  %22 = call i32 (i8*, i64, i32, i64, i8*, ...) @__snprintf_chk(i8* noundef %14, i64 noundef %17, i32 noundef 0, i64 noundef %19, i8* noundef getelementptr inbounds ([3 x i8], [3 x i8]* @.str.6, i64 0, i64 0), i32 noundef %21)
   %23 = load i8*, i8** %5, align 8
   call void @make_string(%struct.string* sret(%struct.string) align 8 %0, i8* noundef %23)
   ret void
@@ -952,12 +1095,12 @@ define void @__i32_to_string__(%struct.string* noalias sret(%struct.string) alig
   store i32 %1, i32* %3, align 4
   %6 = call i64 @llvm.objectsize.i64.p0i8(i8* null, i1 false, i1 true, i1 false)
   %7 = load i32, i32* %3, align 4
-  %8 = call i32 (i8*, i64, i32, i64, i8*, ...) @__snprintf_chk(i8* noundef null, i64 noundef 0, i32 noundef 0, i64 noundef %6, i8* noundef getelementptr inbounds ([3 x i8], [3 x i8]* @.str.5, i64 0, i64 0), i32 noundef %7)
+  %8 = call i32 (i8*, i64, i32, i64, i8*, ...) @__snprintf_chk(i8* noundef null, i64 noundef 0, i32 noundef 0, i64 noundef %6, i8* noundef getelementptr inbounds ([3 x i8], [3 x i8]* @.str.6, i64 0, i64 0), i32 noundef %7)
   store i32 %8, i32* %4, align 4
   %9 = load i32, i32* %4, align 4
   %10 = add nsw i32 %9, 1
   %11 = sext i32 %10 to i64
-  %12 = call i8* @malloc(i64 noundef %11) #10
+  %12 = call i8* @malloc(i64 noundef %11) #12
   store i8* %12, i8** %5, align 8
   %13 = load i8*, i8** %5, align 8
   %14 = load i32, i32* %4, align 4
@@ -966,7 +1109,7 @@ define void @__i32_to_string__(%struct.string* noalias sret(%struct.string) alig
   %17 = load i8*, i8** %5, align 8
   %18 = call i64 @llvm.objectsize.i64.p0i8(i8* %17, i1 false, i1 true, i1 false)
   %19 = load i32, i32* %3, align 4
-  %20 = call i32 (i8*, i64, i32, i64, i8*, ...) @__snprintf_chk(i8* noundef %13, i64 noundef %16, i32 noundef 0, i64 noundef %18, i8* noundef getelementptr inbounds ([3 x i8], [3 x i8]* @.str.5, i64 0, i64 0), i32 noundef %19)
+  %20 = call i32 (i8*, i64, i32, i64, i8*, ...) @__snprintf_chk(i8* noundef %13, i64 noundef %16, i32 noundef 0, i64 noundef %18, i8* noundef getelementptr inbounds ([3 x i8], [3 x i8]* @.str.6, i64 0, i64 0), i32 noundef %19)
   %21 = load i8*, i8** %5, align 8
   call void @make_string(%struct.string* sret(%struct.string) align 8 %0, i8* noundef %21)
   ret void
@@ -989,12 +1132,12 @@ define void @__i64_to_string__(%struct.string* noalias sret(%struct.string) alig
   store i64 %1, i64* %3, align 8
   %6 = call i64 @llvm.objectsize.i64.p0i8(i8* null, i1 false, i1 true, i1 false)
   %7 = load i64, i64* %3, align 8
-  %8 = call i32 (i8*, i64, i32, i64, i8*, ...) @__snprintf_chk(i8* noundef null, i64 noundef 0, i32 noundef 0, i64 noundef %6, i8* noundef getelementptr inbounds ([4 x i8], [4 x i8]* @.str.6, i64 0, i64 0), i64 noundef %7)
+  %8 = call i32 (i8*, i64, i32, i64, i8*, ...) @__snprintf_chk(i8* noundef null, i64 noundef 0, i32 noundef 0, i64 noundef %6, i8* noundef getelementptr inbounds ([4 x i8], [4 x i8]* @.str.7, i64 0, i64 0), i64 noundef %7)
   store i32 %8, i32* %4, align 4
   %9 = load i32, i32* %4, align 4
   %10 = add nsw i32 %9, 1
   %11 = sext i32 %10 to i64
-  %12 = call i8* @malloc(i64 noundef %11) #10
+  %12 = call i8* @malloc(i64 noundef %11) #12
   store i8* %12, i8** %5, align 8
   %13 = load i8*, i8** %5, align 8
   %14 = load i32, i32* %4, align 4
@@ -1003,7 +1146,7 @@ define void @__i64_to_string__(%struct.string* noalias sret(%struct.string) alig
   %17 = load i8*, i8** %5, align 8
   %18 = call i64 @llvm.objectsize.i64.p0i8(i8* %17, i1 false, i1 true, i1 false)
   %19 = load i64, i64* %3, align 8
-  %20 = call i32 (i8*, i64, i32, i64, i8*, ...) @__snprintf_chk(i8* noundef %13, i64 noundef %16, i32 noundef 0, i64 noundef %18, i8* noundef getelementptr inbounds ([4 x i8], [4 x i8]* @.str.6, i64 0, i64 0), i64 noundef %19)
+  %20 = call i32 (i8*, i64, i32, i64, i8*, ...) @__snprintf_chk(i8* noundef %13, i64 noundef %16, i32 noundef 0, i64 noundef %18, i8* noundef getelementptr inbounds ([4 x i8], [4 x i8]* @.str.7, i64 0, i64 0), i64 noundef %19)
   %21 = load i8*, i8** %5, align 8
   call void @make_string(%struct.string* sret(%struct.string) align 8 %0, i8* noundef %21)
   ret void
@@ -1018,11 +1161,11 @@ define void @__bool_to_string__(%struct.string* noalias sret(%struct.string) ali
   br i1 %5, label %6, label %7
 
 6:                                                ; preds = %2
-  call void @make_string(%struct.string* sret(%struct.string) align 8 %0, i8* noundef getelementptr inbounds ([6 x i8], [6 x i8]* @.str.9, i64 0, i64 0))
+  call void @make_string(%struct.string* sret(%struct.string) align 8 %0, i8* noundef getelementptr inbounds ([6 x i8], [6 x i8]* @.str.10, i64 0, i64 0))
   br label %8
 
 7:                                                ; preds = %2
-  call void @make_string(%struct.string* sret(%struct.string) align 8 %0, i8* noundef getelementptr inbounds ([5 x i8], [5 x i8]* @.str.10, i64 0, i64 0))
+  call void @make_string(%struct.string* sret(%struct.string) align 8 %0, i8* noundef getelementptr inbounds ([5 x i8], [5 x i8]* @.str.11, i64 0, i64 0))
   br label %8
 
 8:                                                ; preds = %7, %6
@@ -1039,7 +1182,7 @@ define void @__get_argv_slice__(%struct.slice* noalias sret(%struct.slice) align
   %9 = alloca %struct.string, align 8
   store i32 %1, i32* %4, align 4
   store i8** %2, i8*** %5, align 8
-  %10 = call i8* @malloc(i64 noundef 24) #10
+  %10 = call i8* @malloc(i64 noundef 24) #12
   %11 = bitcast i8* %10 to %struct.slice*
   store %struct.slice* %11, %struct.slice** %6, align 8
   %12 = load %struct.slice*, %struct.slice** %6, align 8
@@ -1084,46 +1227,99 @@ define void @__get_argv_slice__(%struct.slice* noalias sret(%struct.slice) align
 
 ; Function Attrs: noinline nounwind optnone ssp uwtable
 define void @init() #0 {
-  call void bitcast (void (...)* @__main____init__ to void ()*)()
+  call void bitcast (void (...)* @____INIT____ to void ()*)()
   ret void
 }
 
-declare void @__main____init__(...) #2
+declare void @____INIT____(...) #1
 
 ; Function Attrs: noinline nounwind optnone ssp uwtable
 define i32 @main(i32 noundef %0, i8** noundef %1) #0 {
   %3 = alloca i32, align 4
   %4 = alloca i32, align 4
   %5 = alloca i8**, align 8
-  %6 = alloca %struct.slice, align 8
+  %6 = alloca [48 x i32]*, align 8
+  %7 = alloca i32, align 4
+  %8 = alloca %struct.error*, align 8
+  %9 = alloca %struct.string, align 8
+  %10 = alloca %struct.slice, align 8
   store i32 0, i32* %3, align 4
   store i32 %0, i32* %4, align 4
   store i8** %1, i8*** %5, align 8
-  call void bitcast (void (...)* @__main____init__ to void ()*)()
-  %7 = load i32, i32* %4, align 4
-  %8 = load i32, i32* %4, align 4
-  %9 = load i8**, i8*** %5, align 8
-  call void @__get_argv_slice__(%struct.slice* sret(%struct.slice) align 8 %6, i32 noundef %8, i8** noundef %9)
-  %10 = call i32 @__main__(i32 noundef %7, %struct.slice* noundef %6)
-  ret i32 %10
+  %11 = call [48 x i32]* @____push_new_exception_env____()
+  store [48 x i32]* %11, [48 x i32]** %6, align 8
+  %12 = load [48 x i32]*, [48 x i32]** %6, align 8
+  %13 = getelementptr inbounds [48 x i32], [48 x i32]* %12, i64 0, i64 0
+  %14 = call i32 @setjmp(i32* noundef %13) #15
+  store i32 %14, i32* %7, align 4
+  %15 = load i32, i32* @exception_index, align 4
+  %16 = icmp ne i32 %15, 0
+  br i1 %16, label %17, label %40
+
+17:                                               ; preds = %2
+  %18 = load i32, i32* @exception_index, align 4
+  %19 = sub nsw i32 %18, 1
+  %20 = sext i32 %19 to i64
+  %21 = getelementptr inbounds [100 x %struct.error*], [100 x %struct.error*]* @EXCEPTION_TABLE, i64 0, i64 %20
+  %22 = load %struct.error*, %struct.error** %21, align 8
+  store %struct.error* %22, %struct.error** %8, align 8
+  %23 = load %struct.error*, %struct.error** %8, align 8
+  %24 = icmp eq %struct.error* %23, null
+  br i1 %24, label %25, label %29
+
+25:                                               ; preds = %17
+  %26 = load i32, i32* %7, align 4
+  %27 = call i32 (i8*, ...) @printf(i8* noundef getelementptr inbounds ([22 x i8], [22 x i8]* @.str.12, i64 0, i64 0), i32 noundef %26)
+  %28 = load i32, i32* %7, align 4
+  call void @exit(i32 noundef %28) #11
+  unreachable
+
+29:                                               ; preds = %17
+  %30 = load %struct.error*, %struct.error** %8, align 8
+  %31 = getelementptr inbounds %struct.error, %struct.error* %30, i32 0, i32 1
+  %32 = load i32, i32* %31, align 8
+  %33 = load %struct.error*, %struct.error** %8, align 8
+  %34 = getelementptr inbounds %struct.error, %struct.error* %33, i32 0, i32 0
+  %35 = bitcast %struct.string* %9 to i8*
+  %36 = bitcast %struct.string* %34 to i8*
+  call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 8 %35, i8* align 8 %36, i64 24, i1 false)
+  %37 = call i8* @to_char_pointer(%struct.string* noundef %9)
+  %38 = call i32 (i8*, ...) @printf(i8* noundef getelementptr inbounds ([35 x i8], [35 x i8]* @.str.13, i64 0, i64 0), i32 noundef %32, i8* noundef %37)
+  %39 = load i32, i32* %7, align 4
+  call void @exit(i32 noundef %39) #11
+  unreachable
+
+40:                                               ; preds = %2
+  call void @init()
+  %41 = load i32, i32* %4, align 4
+  %42 = load i32, i32* %4, align 4
+  %43 = load i8**, i8*** %5, align 8
+  call void @__get_argv_slice__(%struct.slice* sret(%struct.slice) align 8 %10, i32 noundef %42, i8** noundef %43)
+  %44 = call i32 @__main__(i32 noundef %41, %struct.slice* noundef %10)
+  ret i32 %44
 }
 
-declare i32 @__main__(i32 noundef, %struct.slice* noundef) #2
+; Function Attrs: returns_twice
+declare i32 @setjmp(i32* noundef) #10
+
+declare i32 @__main__(i32 noundef, %struct.slice* noundef) #1
 
 attributes #0 = { noinline nounwind optnone ssp uwtable "frame-pointer"="non-leaf" "min-legal-vector-width"="0" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "target-cpu"="apple-m1" "target-features"="+aes,+crc,+crypto,+dotprod,+fp-armv8,+fp16fml,+fullfp16,+lse,+neon,+ras,+rcpc,+rdm,+sha2,+v8.5a,+zcm,+zcz" }
-attributes #1 = { allocsize(0) "frame-pointer"="non-leaf" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "target-cpu"="apple-m1" "target-features"="+aes,+crc,+crypto,+dotprod,+fp-armv8,+fp16fml,+fullfp16,+lse,+neon,+ras,+rcpc,+rdm,+sha2,+v8.5a,+zcm,+zcz" }
-attributes #2 = { "frame-pointer"="non-leaf" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "target-cpu"="apple-m1" "target-features"="+aes,+crc,+crypto,+dotprod,+fp-armv8,+fp16fml,+fullfp16,+lse,+neon,+ras,+rcpc,+rdm,+sha2,+v8.5a,+zcm,+zcz" }
-attributes #3 = { noreturn "frame-pointer"="non-leaf" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "target-cpu"="apple-m1" "target-features"="+aes,+crc,+crypto,+dotprod,+fp-armv8,+fp16fml,+fullfp16,+lse,+neon,+ras,+rcpc,+rdm,+sha2,+v8.5a,+zcm,+zcz" }
+attributes #1 = { "frame-pointer"="non-leaf" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "target-cpu"="apple-m1" "target-features"="+aes,+crc,+crypto,+dotprod,+fp-armv8,+fp16fml,+fullfp16,+lse,+neon,+ras,+rcpc,+rdm,+sha2,+v8.5a,+zcm,+zcz" }
+attributes #2 = { noreturn "frame-pointer"="non-leaf" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "target-cpu"="apple-m1" "target-features"="+aes,+crc,+crypto,+dotprod,+fp-armv8,+fp16fml,+fullfp16,+lse,+neon,+ras,+rcpc,+rdm,+sha2,+v8.5a,+zcm,+zcz" }
+attributes #3 = { allocsize(0) "frame-pointer"="non-leaf" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "target-cpu"="apple-m1" "target-features"="+aes,+crc,+crypto,+dotprod,+fp-armv8,+fp16fml,+fullfp16,+lse,+neon,+ras,+rcpc,+rdm,+sha2,+v8.5a,+zcm,+zcz" }
 attributes #4 = { allocsize(1) "frame-pointer"="non-leaf" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "target-cpu"="apple-m1" "target-features"="+aes,+crc,+crypto,+dotprod,+fp-armv8,+fp16fml,+fullfp16,+lse,+neon,+ras,+rcpc,+rdm,+sha2,+v8.5a,+zcm,+zcz" }
 attributes #5 = { nounwind "frame-pointer"="non-leaf" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "target-cpu"="apple-m1" "target-features"="+aes,+crc,+crypto,+dotprod,+fp-armv8,+fp16fml,+fullfp16,+lse,+neon,+ras,+rcpc,+rdm,+sha2,+v8.5a,+zcm,+zcz" }
 attributes #6 = { nofree nosync nounwind readnone speculatable willreturn }
 attributes #7 = { nofree nosync nounwind willreturn }
 attributes #8 = { argmemonly nofree nounwind willreturn }
 attributes #9 = { argmemonly nofree nounwind willreturn writeonly }
-attributes #10 = { allocsize(0) }
+attributes #10 = { returns_twice "frame-pointer"="non-leaf" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "target-cpu"="apple-m1" "target-features"="+aes,+crc,+crypto,+dotprod,+fp-armv8,+fp16fml,+fullfp16,+lse,+neon,+ras,+rcpc,+rdm,+sha2,+v8.5a,+zcm,+zcz" }
 attributes #11 = { noreturn }
-attributes #12 = { allocsize(1) }
-attributes #13 = { nounwind }
+attributes #12 = { allocsize(0) }
+attributes #13 = { allocsize(1) }
+attributes #14 = { nounwind }
+attributes #15 = { returns_twice }
 
 !llvm.module.flags = !{!0, !1, !2, !3, !4, !5, !6, !7}
 !llvm.ident = !{!8}

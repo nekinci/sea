@@ -744,3 +744,42 @@ func (kv *KeyValueExpr) Pos() (Pos, Pos) {
 	_, end := kv.Value.Pos()
 	return start, end
 }
+
+type TryCatchStmt struct {
+	TryBlock   Stmt
+	CatchBlock *CatchClause
+	start      Pos
+}
+
+type CatchClause struct {
+	Block  *BlockStmt
+	Params []*ParamExpr
+	start  Pos
+}
+
+func (c *CatchClause) IsStmt() {}
+
+func (c *CatchClause) Pos() (Pos, Pos) {
+	_, end := c.Block.Pos()
+	return c.start, end
+}
+
+func (t *TryCatchStmt) IsStmt() {}
+func (t *TryCatchStmt) Pos() (Pos, Pos) {
+	_, end := t.TryBlock.Pos()
+	if t.CatchBlock != nil {
+		_, end = t.CatchBlock.Block.Pos()
+	}
+	return t.start, end
+}
+
+type ThrowStmt struct {
+	Arg   Expr
+	start Pos
+}
+
+func (t *ThrowStmt) IsStmt() {}
+func (t *ThrowStmt) Pos() (Pos, Pos) {
+	_, end := t.Arg.Pos()
+	return t.start, end
+}

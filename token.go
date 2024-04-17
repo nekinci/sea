@@ -81,4 +81,7 @@ const (
 	TokConst          Token = "const"
 	TokUse            Token = "use"
 	TokAs             Token = "as"
+	TokTry            Token = "try"
+	TokCatch          Token = "catch"
+	TokThrow          Token = "throw"
 )

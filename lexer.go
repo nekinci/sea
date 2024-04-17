@@ -283,6 +283,12 @@ func (l *Lexer) tok() Token {
 			return TokUse
 		case "as":
 			return TokAs
+		case "try":
+			return TokTry
+		case "catch":
+			return TokCatch
+		case "throw":
+			return TokThrow
 		}
 
 		return TokIdentifier

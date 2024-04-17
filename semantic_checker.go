@@ -378,7 +378,28 @@ func (c *Checker) addBuiltinTypes(names ...string) {
 func (c *Checker) initGlobalScope() {
 
 	c.addBuiltinTypes("string", "char", "bool", "i64", "i32", "i16", "i8", "f16", "f32", "f64", "void")
-
+	c.addSymbol("error", &TypeDef{
+		DefNode:     nil,
+		Name:        "error",
+		Fields:      []TypeField{{Name: "message", Type: "string"}, {Name: "error_code", Type: "i32"}},
+		Completed:   true,
+		IsStruct:    true,
+		IsBuiltin:   true,
+		Package:     "runtime",
+		PackagePath: c.Package.Path,
+	})
+	c.enterTypeScope("error")
+	c.addSymbol("message", &VarDef{
+		Name:    "message",
+		Type:    "string",
+		Package: c.Package.Name,
+	})
+	c.addSymbol("error_code", &VarDef{
+		Name:    "error_code",
+		Type:    "i32",
+		Package: c.Package.Name,
+	})
+	c.CloseScope()
 	err := c.addSymbol("printf_internal", &FuncDef{
 		DefNode: nil,
 		Name:    "printf_internal",
@@ -1118,10 +1139,45 @@ func (c *Checker) checkStmt(stmt Stmt) {
 			return
 		}
 		stmt.ctx = c.ctx.(*ForCtx)
+	case *CatchClause:
+		c.EnterScope()
+		defer c.CloseScope()
+		if len(stmt.Params) > 0 {
+			expr := stmt.Params[0]
+			t := c.getNameOfType(expr.Type)
+			if c.isPointer(t) && c.extractType(t) != "error" {
+				start, end := expr.Pos()
+				c.errorf(start, end, "invalid type: %s, expected: %s", t, "pointer<error>")
+			}
+			c.addSymbol(expr.Name.Name, &VarDef{
+				Name:    expr.Name.Name,
+				Type:    t,
+				Package: c.Package.Name,
+			})
+		}
+
+		c.checkStmt(stmt.Block)
+	case *TryCatchStmt:
+		c.checkStmt(stmt.TryBlock)
+		if stmt.CatchBlock != nil {
+			c.checkStmt(stmt.CatchBlock)
+		}
+	case *ThrowStmt:
+		l, err := c.checkExpr(stmt.Arg)
+		if err == nil {
+			if !c.isPointer(l) || (c.isNil(l)) {
+				start, end := stmt.Pos()
+				c.errorf(start, end, "invalid error reference, expected error pointer")
+			}
+		}
 	default:
 		panic("Unhandled")
 
 	}
+}
+
+func (c *Checker) isNil(l string) bool {
+	return l == "pointer<nil>"
 }
 
 func isNumber(t string) bool {

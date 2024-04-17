@@ -1,16 +1,21 @@
 package main
 
-use "strings" as strs
+use "strings"
 use "io"
 
+
+fun void throwsError() {
+    println("some operation")
+    throw &error{message: "error message", error_code: 255}
+}
+
 fun i32 main() {
-    strs.CONST_EXAMPLE_1 = "NO CONST"
-    var strs.StrBuilder* strBuilder = &strs.StrBuilder{s:"dddd"}
-    strs.doSomething(strBuilder)
-    strs.printVar()
-    strBuilder.append("1")
-    strBuilder.append("2")
-    strBuilder.print_result()
+    try {
+        throwsError()
+    } catch(error* err) {
+        println("caught error: " + err.message + ", code: " + to_string(err.error_code))
+    }
+    println("continuing the process")
     return 0
 }
 

@@ -258,6 +258,10 @@ func (p *Parser) parseStmt() Stmt {
 		return p.parseConst()
 	case TokIncr, TokDecr:
 		return p.parseIncDecrStmt(nil)
+	case TokTry:
+		return p.parseTryCatch()
+	case TokThrow:
+		return p.parseThrowStmt()
 	default:
 		exprStmt := p.parseExprStmt()
 		if p.curTok == TokIncr || p.curTok == TokDecr {
@@ -265,6 +269,33 @@ func (p *Parser) parseStmt() Stmt {
 		}
 		return exprStmt
 	}
+}
+
+func (p *Parser) parseThrowStmt() Stmt {
+	p.expect(TokThrow)
+	throwStmt := &ThrowStmt{start: p.startOfLastExpected()}
+	throwStmt.Arg = p.parseExpr()
+	return throwStmt
+}
+
+func (p *Parser) parseTryCatch() Stmt {
+	p.expect(TokTry)
+
+	tryCatch := &TryCatchStmt{
+		start: p.startOfLastExpected(),
+	}
+
+	tryCatch.TryBlock = p.parseBlock()
+	if p.curTok == TokCatch {
+		catchBlock := &CatchClause{start: p.startOfLastExpected()}
+		p.expect(TokCatch)
+		params := p.parseParams()
+		catchBlock.Params = params
+		catchBlock.Block = p.parseBlock()
+		tryCatch.CatchBlock = catchBlock
+	}
+
+	return tryCatch
 }
 
 func (p *Parser) parseIncDecrStmt(expr Expr) Stmt {

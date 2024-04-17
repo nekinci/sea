@@ -172,6 +172,23 @@ func (c *Compiler) initBuiltinTypes() {
 	stringStruct := types.NewStruct(types.NewPointer(types.I8), types.I64, types.I64)
 	def := c.module.NewTypeDef("string", stringStruct)
 	c.types["string"] = def
+
+	errorTyp := types.NewStruct(
+		c.types["string"], c.types["i32"])
+	errorDef := c.module.NewTypeDef("error", errorTyp)
+	c.types["error"] = errorDef
+	c.typesIndexMap[fieldIndexKey{
+		field: "message",
+		typ:   "error",
+	}] = 0
+	c.typesIndexMap[fieldIndexKey{
+		field: "error_code",
+		typ:   "error",
+	}] = 1
+
+	jmpBufTyp := types.NewPointer(types.I32)
+	jmpBufDef := c.module.NewTypeDef("jmp_buf", jmpBufTyp)
+	c.types["jmp_buf"] = jmpBufDef
 }
 
 func (c *Compiler) NewPassByValueParameter(name string, typ types.Type) *ir.Param {
@@ -331,6 +348,34 @@ func (c *Compiler) initBuiltinFuncs() {
 	printBoolFn := module.NewFunc("__print__bool__", types.Void, ir.NewParam("_", c.types["bool"]))
 	printBoolFn.Linkage = enum.LinkageExternal
 	c.funcs["__print_bool__"] = printBoolFn
+
+	addExceptionFn := module.NewFunc("____add__exception____", types.Void, ir.NewParam("err", types.NewPointer(c.types["error"])))
+	addExceptionFn.Linkage = enum.LinkageExternal
+	c.funcs["@____add__exception____@"] = addExceptionFn
+
+	pushNewExceptionEnvFn := module.NewFunc("____push_new_exception_env____", types.I64)
+	pushNewExceptionEnvFn.Linkage = enum.LinkageExternal
+	c.funcs["@____push_new_exception_env____@"] = pushNewExceptionEnvFn
+
+	popExceptionEnvFn := module.NewFunc("____pop_exception_env____", types.NewPointer(c.types["jmp_buf"]))
+	popExceptionEnvFn.Linkage = enum.LinkageExternal
+	c.funcs["@____pop_exception_env____@"] = popExceptionEnvFn
+
+	getLastExceptionEnvFn := module.NewFunc("____get_last_exception_env____", types.I64)
+	getLastExceptionEnvFn.Linkage = enum.LinkageExternal
+	c.funcs["@____get_last_exception_env____@"] = getLastExceptionEnvFn
+
+	setJmpFn := module.NewFunc("setjmp", types.I32, ir.NewParam("env", c.types["jmp_buf"]))
+	setJmpFn.Linkage = enum.LinkageExternal
+	c.funcs["setjmp"] = setJmpFn
+
+	longJmpFn := module.NewFunc("longjmp", types.Void, ir.NewParam("env", c.types["jmp_buf"]), ir.NewParam("value", types.I32))
+	longJmpFn.Linkage = enum.LinkageExternal
+	c.funcs["longjmp"] = longJmpFn
+
+	getLastExceptionInstanceFn := module.NewFunc("____get__last__exception__instance____", types.NewPointer(c.types["error"]))
+	getLastExceptionInstanceFn.Linkage = enum.LinkageExternal
+	c.funcs["@____get__last__exception__instance____@"] = getLastExceptionInstanceFn
 
 	c.addToStrFuncs("i8", "i16", "i32", "i64", "f16", "f32", "f64", "bool")
 
@@ -784,7 +829,55 @@ func (c *Compiler) compileStmt(stmt Stmt) {
 		val := generateOperation(c.currentBlock, e, c.getNumericConstant(1.0, innerStmt.Type), Sub)
 		c.currentBlock.NewStore(val, e.(*ir.InstLoad).Src)
 	case *UseStmt:
-		// pass
+	// pass
+	case *CatchClause:
+		if innerStmt != nil {
+			if len(innerStmt.Params) > 0 {
+				alloca := c.currentBlock.NewAlloca(types.NewPointer(c.types["error"]))
+				arg := c.currentBlock.NewCall(c.getFunc("@____get__last__exception__instance____@"))
+				c.currentBlock.NewStore(arg, alloca)
+				c.Define(innerStmt.Params[0].Name.Name, alloca)
+			}
+			c.compileStmt(innerStmt.Block)
+		}
+	case *TryCatchStmt:
+		data := c.currentBlock.NewCall(c.getFunc("@____push_new_exception_env____@"))
+		alloca := c.currentBlock.NewAlloca(c.types["jmp_buf"])
+		c.currentBlock.NewStore(c.currentBlock.NewIntToPtr(data, c.types["jmp_buf"]), alloca)
+		v2 := c.currentBlock.NewLoad(c.types["jmp_buf"], alloca)
+		v := c.currentBlock.NewCall(c.getFunc("setjmp"), v2)
+		name := c.PackageName() + "." + c.currentFunc.Name() + "." + "tryBlock." + c.GetSequence()
+		alloc2 := c.currentBlock.NewAlloca(types.I32)
+		c.currentBlock.NewStore(v, alloc2)
+		c.Define(name, alloc2)
+		// TODO refactor compileIfStmt structure to handle both of try-catch and if stmts
+		c.compileIfStmt(&IfStmt{
+			Cond: &BinaryExpr{
+				Left: &IdentExpr{Name: name},
+				Right: &NumberExpr{Value: 0, ctx: &VarAssignCtx{
+					parent:       nil,
+					expectedType: "i32",
+					isGlobal:     false,
+				}},
+				Op: Neq,
+				Ctx: &BinaryExprCtx{
+					OpInfo:       operationInfo{"i32", Neq, "i32"},
+					expectedType: "bool",
+					ResultType:   "bool",
+				},
+			},
+			Then:  innerStmt.CatchBlock,
+			Else:  innerStmt.TryBlock,
+			start: Pos{},
+		})
+	case *ThrowStmt:
+		data := c.currentBlock.NewCall(c.getFunc("@____get_last_exception_env____@"))
+		alloca := c.currentBlock.NewAlloca(c.types["jmp_buf"])
+		c.currentBlock.NewStore(c.currentBlock.NewIntToPtr(data, c.types["jmp_buf"]), alloca)
+		v := c.currentBlock.NewLoad(c.types["jmp_buf"], alloca)
+		arg := c.compileExpr(innerStmt.Arg)
+		c.currentBlock.NewCall(c.getFunc("@____add__exception____@"), arg)
+		c.currentBlock.NewCall(c.getFunc("longjmp"), v, constant.NewInt(types.I32, 0))
 	default:
 		panic("unreachable compileStmt on compiler")
 

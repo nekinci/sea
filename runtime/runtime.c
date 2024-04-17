@@ -7,8 +7,23 @@
 #include <signal.h>
 #include <stdbool.h>
 #include <errno.h>
+#include <setjmp.h>
+
+#ifndef EXCEPTION_TABLE_SIZE
+#define EXCEPTION_TABLE_SIZE 100
+#endif
+
+#ifndef ENV_STACK_SIZE
+#define ENV_STACK_SIZE 100
+#endif
 
 #pragma clang diagnostic ignored "-Wvarargs"
+
+typedef struct error error;
+error* EXCEPTION_TABLE[EXCEPTION_TABLE_SIZE];
+jmp_buf* env_stack[ENV_STACK_SIZE];
+int env_index = 0;
+int exception_index = 0;
 
 typedef struct {
     char* buffer;
@@ -22,6 +37,56 @@ typedef struct {
    size_t cap;
 } slice;
 
+struct error {
+    string message;
+    int error_code;
+    // maybe stacktrace vs.
+};
+
+
+void ____add__exception____(error* err) {
+    EXCEPTION_TABLE[exception_index++] = err;
+}
+
+error* ____get__last__exception__instance____() {
+    if (exception_index <= 0) {
+        printf("invalid exception index: %d", exception_index);
+        exit(14);
+    }
+    error* instance = EXCEPTION_TABLE[exception_index-1];
+    exception_index -= 1;
+    return instance;
+}
+
+void ____pop__exception__instance____() {
+    if (exception_index > 0) {
+        int idx = exception_index - 1;
+        free(EXCEPTION_TABLE[idx]);
+        exception_index--;
+    }
+}
+
+jmp_buf* ____push_new_exception_env____() {
+    jmp_buf* env = malloc(sizeof(jmp_buf));
+    env_stack[env_index] = env;
+    env_index+= 1;
+    return env;
+}
+
+jmp_buf* ____get_last_exception_env____() {
+    return env_stack[env_index - 1];
+}
+
+
+jmp_buf* ____pop_exception_env____() {
+    if (env_index == 0) {
+        return env_stack[env_index];
+    }
+    env_index -= 1;
+    jmp_buf* popped = env_stack[env_index];
+    env_stack[env_index] = NULL;
+    return popped;
+}
 
 slice make_slice() {
     slice s;
@@ -348,6 +413,21 @@ void init() {
 // __main()__
 extern int __main__(int argc, slice argv);
 int main(int argc, char** argv) {
+    jmp_buf* env;
+    int value;
+    env = ____push_new_exception_env____();
+    value = setjmp(*env);
+    if (exception_index != 0) {
+        error* err = EXCEPTION_TABLE[exception_index - 1];
+        if (err == NULL) {
+            printf("Runtime exception: %d", value);
+            exit(value);
+        } else {
+            printf("Error code: %d, Error message: %s\n", err -> error_code, to_char_pointer(err -> message));
+            exit(value);
+        }
+    }
+
     init();
     return __main__(argc, __get_argv_slice__(argc, argv));
 }
