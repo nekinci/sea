@@ -27,8 +27,16 @@ target triple = "arm64-apple-macosx14.0.0"
 @.str.9 = private unnamed_addr constant [2 x i8] c"\0A\00", align 1
 @.str.10 = private unnamed_addr constant [6 x i8] c"false\00", align 1
 @.str.11 = private unnamed_addr constant [5 x i8] c"true\00", align 1
-@.str.12 = private unnamed_addr constant [22 x i8] c"Runtime exception: %d\00", align 1
-@.str.13 = private unnamed_addr constant [35 x i8] c"Error code: %d, Error message: %s\0A\00", align 1
+@.str.12 = private unnamed_addr constant [18 x i8] c"Runtime exception\00", align 1
+@.str.13 = private unnamed_addr constant [37 x i8] c"::Error code: %d, Error message: %s\0A\00", align 1
+@.str.14 = private unnamed_addr constant [34 x i8] c"nil pointer dereference exception\00", align 1
+@.str.15 = private unnamed_addr constant [25 x i8] c"floating point exception\00", align 1
+@.str.16 = private unnamed_addr constant [20 x i8] c"illegal instruction\00", align 1
+@.str.17 = private unnamed_addr constant [10 x i8] c"bus error\00", align 1
+@.str.18 = private unnamed_addr constant [14 x i8] c"abort program\00", align 1
+@.str.19 = private unnamed_addr constant [24 x i8] c"bad instruction sigtrap\00", align 1
+@.str.20 = private unnamed_addr constant [17 x i8] c"sigempt received\00", align 1
+@.str.21 = private unnamed_addr constant [16 x i8] c"bad system call\00", align 1
 
 ; Function Attrs: noinline nounwind optnone ssp uwtable
 define void @____add__exception____(%struct.error* noundef %0) #0 {
@@ -1234,69 +1242,198 @@ define void @init() #0 {
 declare void @____INIT____(...) #1
 
 ; Function Attrs: noinline nounwind optnone ssp uwtable
+define void @____handle__exception____() #0 {
+  %1 = alloca %struct.error*, align 8
+  %2 = alloca %struct.string, align 8
+  %3 = load i32, i32* @exception_index, align 4
+  %4 = sub nsw i32 %3, 1
+  %5 = sext i32 %4 to i64
+  %6 = getelementptr inbounds [100 x %struct.error*], [100 x %struct.error*]* @EXCEPTION_TABLE, i64 0, i64 %5
+  %7 = load %struct.error*, %struct.error** %6, align 8
+  store %struct.error* %7, %struct.error** %1, align 8
+  %8 = load %struct.error*, %struct.error** %1, align 8
+  %9 = icmp eq %struct.error* %8, null
+  br i1 %9, label %10, label %12
+
+10:                                               ; preds = %0
+  %11 = call i32 (i8*, ...) @printf(i8* noundef getelementptr inbounds ([18 x i8], [18 x i8]* @.str.12, i64 0, i64 0))
+  call void @exit(i32 noundef 255) #11
+  unreachable
+
+12:                                               ; preds = %0
+  %13 = load %struct.error*, %struct.error** %1, align 8
+  %14 = getelementptr inbounds %struct.error, %struct.error* %13, i32 0, i32 1
+  %15 = load i32, i32* %14, align 8
+  %16 = load %struct.error*, %struct.error** %1, align 8
+  %17 = getelementptr inbounds %struct.error, %struct.error* %16, i32 0, i32 0
+  %18 = bitcast %struct.string* %2 to i8*
+  %19 = bitcast %struct.string* %17 to i8*
+  call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 8 %18, i8* align 8 %19, i64 24, i1 false)
+  %20 = call i8* @to_char_pointer(%struct.string* noundef %2)
+  %21 = call i32 (i8*, ...) @printf(i8* noundef getelementptr inbounds ([37 x i8], [37 x i8]* @.str.13, i64 0, i64 0), i32 noundef %15, i8* noundef %20)
+  %22 = load %struct.error*, %struct.error** %1, align 8
+  %23 = getelementptr inbounds %struct.error, %struct.error* %22, i32 0, i32 1
+  %24 = load i32, i32* %23, align 8
+  call void @exit(i32 noundef %24) #11
+  unreachable
+}
+
+; Function Attrs: noinline nounwind optnone ssp uwtable
+define void @handle_signal(i32 noundef %0) #0 {
+  %2 = alloca i32, align 4
+  %3 = alloca %struct.string, align 8
+  %4 = alloca %struct.string, align 8
+  %5 = alloca %struct.string, align 8
+  %6 = alloca %struct.string, align 8
+  %7 = alloca %struct.string, align 8
+  %8 = alloca %struct.string, align 8
+  %9 = alloca %struct.string, align 8
+  %10 = alloca %struct.string, align 8
+  %11 = alloca %struct.string, align 8
+  %12 = alloca [48 x i32]*, align 8
+  %13 = alloca %struct.error*, align 8
+  %14 = alloca %struct.error, align 8
+  store i32 %0, i32* %2, align 4
+  %15 = load i32, i32* %2, align 4
+  switch i32 %15, label %40 [
+    i32 11, label %16
+    i32 8, label %19
+    i32 4, label %22
+    i32 10, label %25
+    i32 6, label %28
+    i32 5, label %31
+    i32 7, label %34
+    i32 12, label %37
+  ]
+
+16:                                               ; preds = %1
+  call void @make_string(%struct.string* sret(%struct.string) align 8 %4, i8* noundef getelementptr inbounds ([34 x i8], [34 x i8]* @.str.14, i64 0, i64 0))
+  %17 = bitcast %struct.string* %3 to i8*
+  %18 = bitcast %struct.string* %4 to i8*
+  call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 8 %17, i8* align 8 %18, i64 24, i1 false)
+  br label %40
+
+19:                                               ; preds = %1
+  call void @make_string(%struct.string* sret(%struct.string) align 8 %5, i8* noundef getelementptr inbounds ([25 x i8], [25 x i8]* @.str.15, i64 0, i64 0))
+  %20 = bitcast %struct.string* %3 to i8*
+  %21 = bitcast %struct.string* %5 to i8*
+  call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 8 %20, i8* align 8 %21, i64 24, i1 false)
+  br label %40
+
+22:                                               ; preds = %1
+  call void @make_string(%struct.string* sret(%struct.string) align 8 %6, i8* noundef getelementptr inbounds ([20 x i8], [20 x i8]* @.str.16, i64 0, i64 0))
+  %23 = bitcast %struct.string* %3 to i8*
+  %24 = bitcast %struct.string* %6 to i8*
+  call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 8 %23, i8* align 8 %24, i64 24, i1 false)
+  br label %40
+
+25:                                               ; preds = %1
+  call void @make_string(%struct.string* sret(%struct.string) align 8 %7, i8* noundef getelementptr inbounds ([10 x i8], [10 x i8]* @.str.17, i64 0, i64 0))
+  %26 = bitcast %struct.string* %3 to i8*
+  %27 = bitcast %struct.string* %7 to i8*
+  call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 8 %26, i8* align 8 %27, i64 24, i1 false)
+  br label %40
+
+28:                                               ; preds = %1
+  call void @make_string(%struct.string* sret(%struct.string) align 8 %8, i8* noundef getelementptr inbounds ([14 x i8], [14 x i8]* @.str.18, i64 0, i64 0))
+  %29 = bitcast %struct.string* %3 to i8*
+  %30 = bitcast %struct.string* %8 to i8*
+  call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 8 %29, i8* align 8 %30, i64 24, i1 false)
+  br label %40
+
+31:                                               ; preds = %1
+  call void @make_string(%struct.string* sret(%struct.string) align 8 %9, i8* noundef getelementptr inbounds ([24 x i8], [24 x i8]* @.str.19, i64 0, i64 0))
+  %32 = bitcast %struct.string* %3 to i8*
+  %33 = bitcast %struct.string* %9 to i8*
+  call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 8 %32, i8* align 8 %33, i64 24, i1 false)
+  br label %40
+
+34:                                               ; preds = %1
+  call void @make_string(%struct.string* sret(%struct.string) align 8 %10, i8* noundef getelementptr inbounds ([17 x i8], [17 x i8]* @.str.20, i64 0, i64 0))
+  %35 = bitcast %struct.string* %3 to i8*
+  %36 = bitcast %struct.string* %10 to i8*
+  call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 8 %35, i8* align 8 %36, i64 24, i1 false)
+  br label %40
+
+37:                                               ; preds = %1
+  call void @make_string(%struct.string* sret(%struct.string) align 8 %11, i8* noundef getelementptr inbounds ([16 x i8], [16 x i8]* @.str.21, i64 0, i64 0))
+  %38 = bitcast %struct.string* %3 to i8*
+  %39 = bitcast %struct.string* %11 to i8*
+  call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 8 %38, i8* align 8 %39, i64 24, i1 false)
+  br label %40
+
+40:                                               ; preds = %1, %37, %34, %31, %28, %25, %22, %19, %16
+  %41 = call [48 x i32]* @____pop_exception_env____()
+  store [48 x i32]* %41, [48 x i32]** %12, align 8
+  %42 = call i8* @malloc_internal(i64 noundef 32)
+  %43 = bitcast i8* %42 to %struct.error*
+  store %struct.error* %43, %struct.error** %13, align 8
+  %44 = load %struct.error*, %struct.error** %13, align 8
+  %45 = getelementptr inbounds %struct.error, %struct.error* %14, i32 0, i32 0
+  %46 = bitcast %struct.string* %45 to i8*
+  %47 = bitcast %struct.string* %3 to i8*
+  call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 8 %46, i8* align 8 %47, i64 24, i1 false)
+  %48 = getelementptr inbounds %struct.error, %struct.error* %14, i32 0, i32 1
+  %49 = load i32, i32* %2, align 4
+  store i32 %49, i32* %48, align 8
+  %50 = bitcast %struct.error* %44 to i8*
+  %51 = bitcast %struct.error* %14 to i8*
+  call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 8 %50, i8* align 8 %51, i64 32, i1 false)
+  %52 = load %struct.error*, %struct.error** %13, align 8
+  call void @____add__exception____(%struct.error* noundef %52)
+  call void @____handle__exception____()
+  ret void
+}
+
+; Function Attrs: noinline nounwind optnone ssp uwtable
+define void @____handle__runtime__signals____() #0 {
+  %1 = call void (i32)* @signal(i32 noundef 11, void (i32)* noundef @handle_signal)
+  %2 = call void (i32)* @signal(i32 noundef 8, void (i32)* noundef @handle_signal)
+  %3 = call void (i32)* @signal(i32 noundef 4, void (i32)* noundef @handle_signal)
+  %4 = call void (i32)* @signal(i32 noundef 10, void (i32)* noundef @handle_signal)
+  %5 = call void (i32)* @signal(i32 noundef 6, void (i32)* noundef @handle_signal)
+  %6 = call void (i32)* @signal(i32 noundef 5, void (i32)* noundef @handle_signal)
+  %7 = call void (i32)* @signal(i32 noundef 7, void (i32)* noundef @handle_signal)
+  %8 = call void (i32)* @signal(i32 noundef 12, void (i32)* noundef @handle_signal)
+  ret void
+}
+
+declare void (i32)* @signal(i32 noundef, void (i32)* noundef) #1
+
+; Function Attrs: noinline nounwind optnone ssp uwtable
 define i32 @main(i32 noundef %0, i8** noundef %1) #0 {
   %3 = alloca i32, align 4
   %4 = alloca i32, align 4
   %5 = alloca i8**, align 8
   %6 = alloca [48 x i32]*, align 8
   %7 = alloca i32, align 4
-  %8 = alloca %struct.error*, align 8
-  %9 = alloca %struct.string, align 8
-  %10 = alloca %struct.slice, align 8
+  %8 = alloca %struct.slice, align 8
   store i32 0, i32* %3, align 4
   store i32 %0, i32* %4, align 4
   store i8** %1, i8*** %5, align 8
-  %11 = call [48 x i32]* @____push_new_exception_env____()
-  store [48 x i32]* %11, [48 x i32]** %6, align 8
-  %12 = load [48 x i32]*, [48 x i32]** %6, align 8
-  %13 = getelementptr inbounds [48 x i32], [48 x i32]* %12, i64 0, i64 0
-  %14 = call i32 @setjmp(i32* noundef %13) #15
-  store i32 %14, i32* %7, align 4
-  %15 = load i32, i32* @exception_index, align 4
-  %16 = icmp ne i32 %15, 0
-  br i1 %16, label %17, label %40
+  %9 = call [48 x i32]* @____push_new_exception_env____()
+  store [48 x i32]* %9, [48 x i32]** %6, align 8
+  %10 = load [48 x i32]*, [48 x i32]** %6, align 8
+  %11 = getelementptr inbounds [48 x i32], [48 x i32]* %10, i64 0, i64 0
+  %12 = call i32 @setjmp(i32* noundef %11) #15
+  store i32 %12, i32* %7, align 4
+  call void @____handle__runtime__signals____()
+  %13 = load i32, i32* @exception_index, align 4
+  %14 = icmp ne i32 %13, 0
+  br i1 %14, label %15, label %16
 
-17:                                               ; preds = %2
-  %18 = load i32, i32* @exception_index, align 4
-  %19 = sub nsw i32 %18, 1
-  %20 = sext i32 %19 to i64
-  %21 = getelementptr inbounds [100 x %struct.error*], [100 x %struct.error*]* @EXCEPTION_TABLE, i64 0, i64 %20
-  %22 = load %struct.error*, %struct.error** %21, align 8
-  store %struct.error* %22, %struct.error** %8, align 8
-  %23 = load %struct.error*, %struct.error** %8, align 8
-  %24 = icmp eq %struct.error* %23, null
-  br i1 %24, label %25, label %29
+15:                                               ; preds = %2
+  call void @____handle__exception____()
+  br label %16
 
-25:                                               ; preds = %17
-  %26 = load i32, i32* %7, align 4
-  %27 = call i32 (i8*, ...) @printf(i8* noundef getelementptr inbounds ([22 x i8], [22 x i8]* @.str.12, i64 0, i64 0), i32 noundef %26)
-  %28 = load i32, i32* %7, align 4
-  call void @exit(i32 noundef %28) #11
-  unreachable
-
-29:                                               ; preds = %17
-  %30 = load %struct.error*, %struct.error** %8, align 8
-  %31 = getelementptr inbounds %struct.error, %struct.error* %30, i32 0, i32 1
-  %32 = load i32, i32* %31, align 8
-  %33 = load %struct.error*, %struct.error** %8, align 8
-  %34 = getelementptr inbounds %struct.error, %struct.error* %33, i32 0, i32 0
-  %35 = bitcast %struct.string* %9 to i8*
-  %36 = bitcast %struct.string* %34 to i8*
-  call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 8 %35, i8* align 8 %36, i64 24, i1 false)
-  %37 = call i8* @to_char_pointer(%struct.string* noundef %9)
-  %38 = call i32 (i8*, ...) @printf(i8* noundef getelementptr inbounds ([35 x i8], [35 x i8]* @.str.13, i64 0, i64 0), i32 noundef %32, i8* noundef %37)
-  %39 = load i32, i32* %7, align 4
-  call void @exit(i32 noundef %39) #11
-  unreachable
-
-40:                                               ; preds = %2
+16:                                               ; preds = %15, %2
   call void @init()
-  %41 = load i32, i32* %4, align 4
-  %42 = load i32, i32* %4, align 4
-  %43 = load i8**, i8*** %5, align 8
-  call void @__get_argv_slice__(%struct.slice* sret(%struct.slice) align 8 %10, i32 noundef %42, i8** noundef %43)
-  %44 = call i32 @__main__(i32 noundef %41, %struct.slice* noundef %10)
-  ret i32 %44
+  %17 = load i32, i32* %4, align 4
+  %18 = load i32, i32* %4, align 4
+  %19 = load i8**, i8*** %5, align 8
+  call void @__get_argv_slice__(%struct.slice* sret(%struct.slice) align 8 %8, i32 noundef %18, i8** noundef %19)
+  %20 = call i32 @__main__(i32 noundef %17, %struct.slice* noundef %8)
+  ret i32 %20
 }
 
 ; Function Attrs: returns_twice

@@ -357,7 +357,7 @@ func (c *Compiler) initBuiltinFuncs() {
 	pushNewExceptionEnvFn.Linkage = enum.LinkageExternal
 	c.funcs["@____push_new_exception_env____@"] = pushNewExceptionEnvFn
 
-	popExceptionEnvFn := module.NewFunc("____pop_exception_env____", types.NewPointer(c.types["jmp_buf"]))
+	popExceptionEnvFn := module.NewFunc("____pop_exception_env____", types.I64)
 	popExceptionEnvFn.Linkage = enum.LinkageExternal
 	c.funcs["@____pop_exception_env____@"] = popExceptionEnvFn
 
@@ -831,6 +831,7 @@ func (c *Compiler) compileStmt(stmt Stmt) {
 	case *UseStmt:
 	// pass
 	case *CatchClause:
+		c.currentBlock.NewCall(c.getFunc("@____pop_exception_env____@"))
 		if innerStmt != nil {
 			if len(innerStmt.Params) > 0 {
 				alloca := c.currentBlock.NewAlloca(types.NewPointer(c.types["error"]))

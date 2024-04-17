@@ -410,6 +410,66 @@ void init() {
     ____INIT____();
 }
 
+void ____handle__exception____() {
+    error* err = EXCEPTION_TABLE[exception_index - 1];
+    if (err == NULL) {
+        printf("Runtime exception");
+        exit(255);
+    } else {
+        printf("::Error code: %d, Error message: %s\n", err -> error_code, to_char_pointer(err -> message));
+        exit(err -> error_code);
+    }
+}
+
+void handle_signal(int sig_code) {
+    string error_message;
+    switch (sig_code) {
+       case SIGSEGV: {
+            error_message = make_string("nil pointer dereference exception");
+       }; break;
+       case SIGFPE: {
+            error_message = make_string("floating point exception");
+       }; break;
+       case SIGILL: {
+            error_message = make_string("illegal instruction");
+       }; break;
+       case SIGBUS: {
+            error_message = make_string("bus error");
+       }; break;
+       case SIGABRT: {
+            error_message = make_string("abort program");
+       }; break;
+       case SIGTRAP: {
+            error_message = make_string("bad instruction sigtrap");
+       }; break;
+       case SIGEMT: {
+            error_message = make_string("sigempt received");
+       }; break;
+       case SIGSYS: {
+            error_message = make_string("bad system call");
+       }; break;
+    }
+
+    jmp_buf* env = ____pop_exception_env____();
+    error* err_instance = malloc_internal(sizeof(error));
+    *err_instance = (error) {.message = error_message, .error_code = sig_code};
+    ____add__exception____(err_instance);
+    ____handle__exception____();
+}
+
+void ____handle__runtime__signals____() {
+    signal(SIGSEGV, handle_signal);
+    signal(SIGFPE, handle_signal);
+    signal(SIGILL, handle_signal);
+    signal(SIGBUS, handle_signal);
+    signal(SIGABRT, handle_signal);
+    signal(SIGTRAP, handle_signal);
+    signal(SIGEMT, handle_signal);
+    signal(SIGSYS, handle_signal);
+}
+
+
+
 // __main()__
 extern int __main__(int argc, slice argv);
 int main(int argc, char** argv) {
@@ -417,15 +477,9 @@ int main(int argc, char** argv) {
     int value;
     env = ____push_new_exception_env____();
     value = setjmp(*env);
+    ____handle__runtime__signals____();
     if (exception_index != 0) {
-        error* err = EXCEPTION_TABLE[exception_index - 1];
-        if (err == NULL) {
-            printf("Runtime exception: %d", value);
-            exit(value);
-        } else {
-            printf("Error code: %d, Error message: %s\n", err -> error_code, to_char_pointer(err -> message));
-            exit(value);
-        }
+      ____handle__exception____();
     }
 
     init();
