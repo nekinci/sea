@@ -381,6 +381,10 @@ func (c *Compiler) initBuiltinFuncs() {
 
 	initFn := module.NewFunc("__"+c.PackageName()+"__"+"__init__", types.Void)
 	c.funcs["init"] = initFn
+
+	gcCollectStartFn := module.NewFunc("gc_collect_start", types.Void)
+	gcCollectStartFn.Linkage = enum.LinkageExternal
+	c.funcs["__gc__collect__start__"] = gcCollectStartFn
 }
 
 func (c *Compiler) addToStrFuncs(names ...string) {
@@ -1258,6 +1262,7 @@ func (c *Compiler) call(expr *CallExpr) value.Value {
 			args = append(args, arg)
 		}
 
+		c.currentBlock.NewCall(c.getFunc("__gc__collect__start__"))
 		callRes := b.NewCall(fun, args...)
 		if returnVal != nil {
 			return returnVal
@@ -1266,6 +1271,7 @@ func (c *Compiler) call(expr *CallExpr) value.Value {
 	} else {
 		return c.doCast(funcName, expr)
 	}
+
 }
 
 func (c *Compiler) handleSRet(fun *ir.Func, isLeftSelectorExpr bool, args []value.Value, returnVal value.Value) ([]value.Value, value.Value) {

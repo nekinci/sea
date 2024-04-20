@@ -8,6 +8,7 @@
 #include <stdbool.h>
 #include <errno.h>
 #include <setjmp.h>
+#include <stdint.h>
 
 #ifndef EXCEPTION_TABLE_SIZE
 #define EXCEPTION_TABLE_SIZE 100
@@ -17,13 +18,30 @@
 #define ENV_STACK_SIZE 100
 #endif
 
+#ifndef HEAP_METADATA_CAP
+#define HEAP_METADATA_CAP 640000
+#endif
+
 #pragma clang diagnostic ignored "-Wvarargs"
 
+uintptr_t stack_start;
+
+typedef struct Heap_Data Heap_Data;
 typedef struct error error;
+
+void gc_collect();
+void gc_mark(void* end, void* start);
+void start_the_world();
+void stop_the_world();
+void gc_sweep();
+bool can_collectable();
+bool can_sweepable();
+
 error* EXCEPTION_TABLE[EXCEPTION_TABLE_SIZE];
 jmp_buf* env_stack[ENV_STACK_SIZE];
 int env_index = 0;
 int exception_index = 0;
+size_t heap_data_index = 0;
 
 typedef struct {
     char* buffer;
@@ -42,6 +60,14 @@ struct error {
     int error_code;
     // maybe stacktrace vs.
 };
+
+struct Heap_Data {
+    size_t size;
+    void* start;
+    bool is_reachable;
+} ;
+
+Heap_Data* heap_meta_data[HEAP_METADATA_CAP];
 
 
 void ____add__exception____(error* err) {
@@ -180,8 +206,99 @@ int scanf_internal(string s, ...) {
      return r;
 }
 
+void push_heap_data(Heap_Data* heap_data) {
+    heap_meta_data[heap_data_index++] = heap_data;
+}
+
+void stop_the_world() {
+    // TODO implement that when the multi-threading implemented
+}
+
+void start_the_world() {
+    // TODO implement that when the multi-threading implemented
+}
+
+void gc_collect_start() {
+    if (can_collectable()) {
+        stop_the_world();
+            gc_collect();
+        start_the_world();
+    }
+}
+
+void reset_heap_meta_data() {
+    for (int i = 0; i < heap_data_index; ++i) {
+        heap_meta_data[i] -> is_reachable = false;
+    }
+}
+
+void gc_mark(void* stack_end_arg, void *stack_start_arg) {
+
+    void* stack_end = stack_end_arg;
+    void* stack_start = stack_start_arg;
+    while (stack_end < stack_start + 1) {
+        for (size_t i = 0; i < heap_data_index; i++) {
+            Heap_Data* heap_data = (Heap_Data*) heap_meta_data[i];
+            void *start = heap_data -> start;
+            if (heap_data -> is_reachable) continue;
+
+            if (*(uintptr_t*)stack_end == (uintptr_t)start) {
+                heap_data -> is_reachable = true;
+                printf("is reachable: %p %p\n", heap_data -> start, *(uintptr_t*)stack_end);
+                gc_mark((void*)start, (void*)start + heap_data -> size);
+            }
+        }
+        stack_end++;
+    }
+}
+
+void deallocate(int index) {
+    free(heap_meta_data[index] -> start);
+    heap_meta_data[index] = NULL;
+    for (size_t i = index; i < heap_data_index; ++i) {
+        heap_meta_data[i] = heap_meta_data[i + 1];
+    }
+    heap_data_index--;
+}
+
+void gc_sweep() {
+    size_t to_be_removed = 0;
+    for (size_t i = 0; i < heap_data_index; ++i) {
+        Heap_Data* heap_data = heap_meta_data[i];
+        if (!heap_data -> is_reachable) {
+            printf("freeing %p \n", heap_data -> start);
+            deallocate(i--);
+        }
+    }
+
+}
+
+
+bool can_collectable() {
+    return true;
+}
+
+bool can_sweepable() {
+    return true;
+}
+
+void gc_collect() {
+   // reset_heap_meta_data();
+    void* stack_end = (void*) __builtin_frame_address(0);
+    gc_mark(stack_end, (void*)stack_start);
+    if (can_sweepable()) {
+        gc_sweep();
+    }
+}
+
 void* malloc_internal(size_t s) {
-    return malloc(s);
+    size_t size_in_bytes = s + sizeof(Heap_Data);
+    void* allocated = malloc(size_in_bytes);
+    Heap_Data* data = (Heap_Data*) (allocated + s);
+    data -> start = allocated;
+    data -> size = s;
+    heap_meta_data[heap_data_index++] = data;
+    return allocated;
 }
 
 size_t strlen_internal(string str) {
@@ -469,10 +586,11 @@ void ____handle__runtime__signals____() {
 }
 
 
-
 // __main()__
 extern int __main__(int argc, slice argv);
 int main(int argc, char** argv) {
+int *p = NULL;
+    stack_start =(uintptr_t) __builtin_frame_address(0);
     jmp_buf* env;
     int value;
     env = ____push_new_exception_env____();

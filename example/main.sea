@@ -1,31 +1,18 @@
 package main
 
-use "strings"
-use "io"
+struct G {
+    i32 a
+    i32* g
+}
 
+fun void a() {
 
-fun void throwsError() {
-    println("some operation")
-    throw &error{message: "error message", error_code: 255}
+    &G{a: 5}
+
 }
 
 fun i32 main() {
-    try {
-        try {
-            throwsError()
-        } catch(error* err) {
-            println("inner catch")
-        }
-        throwsError()
-    } catch(error* err) {
-        println("caught error: " + err.message + ", code: " + to_string(err.error_code))
-    }
-
-    var error* err2 = nil
-    println(err2.message)
-    println("continuing the process")
+    new(G)
+    a()
     return 0
 }
-
-
-
