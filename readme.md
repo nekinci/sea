@@ -350,10 +350,8 @@ Here are example codes written in sea, until I write documentation the code will
 
 #### Commands:
 
-`sea
-    sealang run <file_name>`
-
-`sealang build <file_name> -o <output_path>`
+    sealang run <main_package_path>
+    sealang build <main_package_path> -o <output_path>
 
 
 # Implementations

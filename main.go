@@ -158,7 +158,7 @@ func parseCommandLineArgs() {
 	if argsLen < 2 || (argsLen == 2 && (os.Args[1] != "help" && os.Args[1] != "version")) {
 		if argsLen < 3 {
 			//binary arg, command, <file_name>
-			fmt.Printf("Invalid command: %s\nExample usage: sealang run <filename>", strings.Join(os.Args, " "))
+			fmt.Printf("Invalid command: %s\nExample usage: sealang run <main_package_path>", strings.Join(os.Args, " "))
 			os.Exit(1)
 		}
 	}
@@ -175,23 +175,26 @@ commands:
 	help: help prints useful command tips
 	build: build compiles input and runtime files and extracts executable binary to current directory or given output parameter path
 	USAGE:
-		sealang build <file_name>
-		sealang build <file_name> -o <output_path>
+		sealang build <main_package_path>
+		sealang build <main_package_path> -o <output_path>
 	run: run builds the input file and runs executable binary
 	USAGE:
-		sealang run <file_name>
+		sealang run <main_package_path>
 	check: check checks syntax and semantic errors for given file
 	USAGE:
-		sealang check <file_name>
+		sealang check <main_package_path>
 `)
 	} else if command == "run" {
 		BasePath = os.Args[2]
-		CompileIt("./runtime/runtime.c", BasePath)
+		_, file := path.Split(BasePath)
+		CompileIt("./runtime/runtime.c", path.Join(BasePath, file), true)
 	} else if command == "check" {
 		pckg := Parse(os.Args[2])
 		Check(pckg, make(map[string]*Module))
 	} else if command == "build" {
-		outputPath := ""
+		BasePath = os.Args[2]
+		_, file := path.Split(BasePath)
+		outputPath := path.Join(BasePath, file)
 		if argsLen > 3 {
 			argv3 := os.Args[3]
 			if argv3 != "-o" {
@@ -202,13 +205,7 @@ commands:
 			}
 			outputPath = os.Args[4]
 		}
-		BasePath = os.Args[2]
-		pckg := Parse(os.Args[2])
-		_ = outputPath
-		Check(pckg, make(map[string]*Module))
-		panic("HANDLE")
-		//output := CompileWrite(nil, pckg)
-		//	compile(output, "./runtime/runtime.c", false, false, outputPath)
+		CompileIt("./runtime/runtime.c", outputPath, false)
 
 	}
 
@@ -218,10 +215,10 @@ func devMode() {
 	Target = "arm64-apple-darwin23.1.0" // TODO
 	_ = os.Setenv("DEBUG", "")
 	BasePath = "./example"
-	CompileIt("./runtime/runtime.c", BasePath)
+	CompileIt("./runtime/runtime.c", BasePath, true)
 }
 
-func CompileIt(runtimePath string, outputPath string) {
+func CompileIt(runtimePath string, outputPath string, runBinary bool) {
 	runtimeOut := compileRuntime(runtimePath)
 	pathList := make([]string, 0)
 	pathList = append(pathList, runtimeOut)
@@ -240,7 +237,7 @@ func CompileIt(runtimePath string, outputPath string) {
 		write := CompileWrite(&o, v)
 		pathList = append(pathList, write)
 	}
-	compileAll(pathList, "./example/example", true, true)
+	compileAll(pathList, outputPath, true, runBinary)
 }
 
 func wrapInitFuncs(compilePackage *Module) {
@@ -283,8 +280,8 @@ func compileRuntime(runtimePath string) string {
 }
 
 func main() {
-	devMode()
-	//parseCommandLineArgs()
+	//devMode()
+	parseCommandLineArgs()
 }
 
 func compileAll(pathList []string, outputPath string, outputForward bool, runBinary bool) {
