@@ -356,6 +356,33 @@ Here are example codes written in sea, until I write documentation the code will
 `sealang build <file_name> -o <output_path>`
 
 
+# Implementations
+All the implementations are listed below simple and naive that I implemented in my free times.
+
+1. [x] Simple and naive garbage collection with naive mark and sweep algorithm.
+2. [x] Simple Error handling with try-catch blocks, built-in error type and supporting runtime exceptions like null pointer exception, also capability of `throw` statements. 
+3. [x] Simple, naive slice data structure, it is automatically growing up when the data is inserted.
+4. [x] Simple string data type that holds its char pointer, size and capacity.
+5. [x] String concatenation with (string-string), (string-char) and (char-char) pairs.
+6. [x] Package structure like golang to support multi module applications and write re-usable codes.
+7. [x] Built-in types i8, i16, i32, i64, f32, f64, bool, string, char, error.
+8. [x] Built-in string comparison ("foo" == "foo")
+9. [x] Extern function declaration to include external C function.
+10. [x] Simple implementation of reference types and `new` operator to allocate them with their size.
+11. [x] Simple struct type definitions and supporting method definitions with `impl` blocks.
+12. [x] Simple type conversion for built-in types like to_string, to_i32, to_i64 and so on.
+13. [ ] Built-in hash-map type.
+14. [ ] Any data type, runtime-type conversion, runtime type comparison.
+15. [ ] Interfacing or virtual methods to handle abstractions. 
+16. [ ] Enumerators
+17. [ ] Switch statements and switch expressions(pattern matching).
+18. [ ] Multi-threading or co-routines to have advantages of concurrent applications.
+19. [ ] Generic types.
+20. [ ] Binding some OS capabilities.
+21. [ ] Fix the OS or CPU-architecture dependent implementations.
+
 ### Known Bugs
 
-1. [ ] Probably too many
+1. [ ] Parser issues
+2. [ ] Static Type Checking issues
+3. [ ] ...
