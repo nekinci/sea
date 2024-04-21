@@ -283,7 +283,7 @@ bool can_sweepable() {
 }
 
 void gc_collect() {
-   // reset_heap_meta_data();
+    reset_heap_meta_data();
     void* stack_end = (void*) __builtin_frame_address(0);
     gc_mark(stack_end, (void*)stack_start);
     if (can_sweepable()) {

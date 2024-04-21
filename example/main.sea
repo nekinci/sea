@@ -1,18 +1,6 @@
 package main
 
-struct G {
-    i32 a
-    i32* g
-}
-
-fun void a() {
-
-    &G{a: 5}
-
-}
 
 fun i32 main() {
-    new(G)
-    a()
     return 0
 }
