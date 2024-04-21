@@ -377,9 +377,8 @@ All the implementations are listed below simple and naive that I implemented in 
 16. [ ] Enumerators
 17. [ ] Switch statements and switch expressions(pattern matching).
 18. [ ] Multi-threading or co-routines to have advantages of concurrent applications.
-19. [ ] Generic types.
-20. [ ] Binding some OS capabilities.
-21. [ ] Fix the OS or CPU-architecture dependent implementations.
+19. [ ] Binding some OS capabilities.
+20. [ ] Fix the OS or CPU-architecture dependent implementations.
 
 ### Known Bugs
 
